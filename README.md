@@ -12,7 +12,7 @@ extension ([draft-ietf-quic-ack-frequency](https://datatracker.ietf.org/doc/draf
 
 | Path | Contents |
 |---|---|
-| `msquic/` | Submodule: [microsoft/msquic](https://github.com/microsoft/msquic), pinned to `v2.6.3` |
+| `msquic/` | Vendored copy of [microsoft/msquic](https://github.com/microsoft/msquic) `v2.6.3` (commit `16ca4d8`); our changes go here |
 | `scripts/` | `setup.sh` builds msquic, secnetperf and tools |
 | `docs/` | Related work, design notes, msquic code map, BibTeX |
 | `proposal/` | Course proposal |
@@ -24,7 +24,7 @@ extension ([draft-ietf-quic-ack-frequency](https://datatracker.ietf.org/doc/draf
 ## Quickstart (Linux)
 
 ```bash
-git clone --recurse-submodules=msquic <repo-url> mcn26 && cd mcn26
+git clone <repo-url> mcn26 && cd mcn26
 scripts/setup.sh                 # INSTALL_DEPS=1 to apt-install dependencies first
 ```
 
@@ -36,6 +36,9 @@ cd build/msquic/bin/Release
 ./secnetperf -target:127.0.0.1 -exec:maxtput \
     -scenario:download -download:3s -ptput:1 -pconn:1           # client
 ```
+
+`setup.sh` downloads quictls (msquic's TLS library) into
+`msquic/submodules/quictls/` on first run; it is not stored in the repo.
 
 Requirements: CMake ≥ 3.16, GCC, Ninja, `libssl-dev`, `libnuma-dev`.
 Sources plus build take about 250 MB of disk.

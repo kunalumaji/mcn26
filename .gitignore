@@ -1,6 +1,9 @@
 # Build output
 build/
 
+# Fetched by scripts/setup.sh, not vendored
+msquic/submodules/quictls/
+
 # Papers are copyrighted; keep links in docs/refs.bib instead
 papers/
 

@@ -17,10 +17,17 @@ if [[ "${INSTALL_DEPS:-0}" == "1" ]]; then
         iproute2 linux-tools-common python3-pip
 fi
 
-echo "==> Initialising submodules"
-git -C "$ROOT" submodule update --init msquic
-# Only the nested submodules needed for a Linux build (skip openssl, googletest, xdp-for-windows).
-git -C "$ROOT/msquic" submodule update --init --depth 1 submodules/clog submodules/quictls
+# msquic v2.6.3 and CLOG are vendored in the repo. quictls is large and never
+# modified, so fetch it at the commit msquic v2.6.3 pins (gitignored).
+QUICTLS_DIR="$ROOT/msquic/submodules/quictls"
+QUICTLS_COMMIT="ff36838bb69801cad56823159a036977bcbe5c75"
+if [[ ! -f "$QUICTLS_DIR/Configure" ]]; then
+    echo "==> Fetching quictls @ ${QUICTLS_COMMIT:0:8}"
+    rm -rf "$QUICTLS_DIR"
+    git init -q "$QUICTLS_DIR"
+    git -C "$QUICTLS_DIR" fetch -q --depth 1 https://github.com/quictls/openssl.git "$QUICTLS_COMMIT"
+    git -C "$QUICTLS_DIR" checkout -q FETCH_HEAD
+fi
 
 echo "==> Configuring msquic ($BUILD_TYPE) in $BUILD_DIR"
 cmake -S "$ROOT/msquic" -B "$BUILD_DIR" -G Ninja \
