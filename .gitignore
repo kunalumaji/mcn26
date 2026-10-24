@@ -1,0 +1,24 @@
+# Build output
+build/
+
+# Papers are copyrighted; keep links in docs/refs.bib instead
+papers/
+
+# Experiment artefacts
+results/**/raw/
+*.pcap
+*.pcapng
+*.qlog
+perf.data*
+*.svg.tmp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
