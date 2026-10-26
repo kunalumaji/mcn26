@@ -47,4 +47,4 @@ Sources plus build take about 250 MB of disk.
 
 - Kunal Umaji
 - Kaveenraj G
-- Aravind Sriram Kumar
+- Aravindh Sriram Kumar A G
