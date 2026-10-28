@@ -4,6 +4,9 @@ build/
 # Fetched by scripts/setup.sh, not vendored
 msquic/submodules/quictls/
 
+# Test files and TLS cert from scripts/make-testdata.sh
+data/
+
 # Papers are copyrighted; keep links in docs/refs.bib instead
 papers/
 

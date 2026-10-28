@@ -42,5 +42,13 @@ echo "==> Building with $JOBS jobs"
 cmake --build "$BUILD_DIR" -j "$JOBS"
 
 BIN="$BUILD_DIR/bin/$BUILD_TYPE"
+
+echo "==> Building quicfile"
+cmake -S "$ROOT/apps/quicfile" -B "$ROOT/build/quicfile" -G Ninja \
+    -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+    -DMSQUIC_LIB_DIR="$BIN"
+cmake --build "$ROOT/build/quicfile" -j "$JOBS"
+cp "$ROOT/build/quicfile/quicfile" "$BIN/"
+
 echo "==> Done. Binaries in $BIN"
 ls "$BIN"
