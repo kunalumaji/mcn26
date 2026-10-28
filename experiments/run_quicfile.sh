@@ -119,10 +119,14 @@ for load in $SERVER_LOADS; do
                 spec="${SPECS[$(( (i + rep - 1) % ${#SPECS[@]} ))]}"
                 tag="L${load}_${spec/:/-}_${file%.bin}_r${rep}"
                 start=$(date +%s.%N)
-                line=$(timeout 900 "$BIN/quicfile" client -target:"$SERVER_IP" \
-                    -port:"${PORT[$spec]}" -file:"$file" -tag:"$tag" -cc:"$CC" 2>&1 \
-                    | grep '^RESULT' || echo "RESULT tag=$tag file=$file FAILED=1")
+                output=$(timeout 900 "$BIN/quicfile" client -target:"$SERVER_IP" \
+                    -port:"${PORT[$spec]}" -file:"$file" -tag:"$tag" -cc:"$CC" 2>&1) || true
                 end=$(date +%s.%N)
+                line=$(grep '^RESULT' <<< "$output" || echo "RESULT tag=$tag file=$file FAILED=1")
+                if [[ "$line" == *FAILED* ]]; then
+                    # Keep the client's own messages (e.g. shutdown status) for diagnosis.
+                    { echo "== $(date -Is) tag=$tag"; echo "$output"; } >> "$OUT/failures.log"
+                fi
                 echo "load=$load spec=$spec rep=$rep start_ts=$start end_ts=$end $line" \
                     | tee -a "$OUT/client.log" | cut -c1-200
                 # A failed download may leave its server unusable (seen once: a

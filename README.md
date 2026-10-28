@@ -187,6 +187,7 @@ Each run writes `results/<timestamp>/`:
 | File | Contents |
 |---|---|
 | `meta.txt` | Settings, commits, hosts, kernels |
+| `restarts.log` / `failures.log` | Only if downloads failed: which servers were restarted, and the client's error output |
 | `client.log` / `server.log` | Raw `RESULT` / `SERVER` lines and the policies' decision log |
 | `runs.csv` | **One row per download**: `download_s` (connection start to last byte: the time to compare policies), `handshake_ms`, `ttfb_ms` (request to first byte), `transfer_ms` (request to last byte), goodput, client and server process CPU (total and per MB), whole-machine CPU % on both sides, packets, ACKs, data packets per ACK, losses, RTT, mean ACK threshold |
 | `ack_decisions.csv` | Every threshold decision over time (`tag`, `t_ms`, `old`, `new`, and the policy's inputs, e.g. `cpu_pct`, `thread_cpu_pct`, `sys_cpu_pct`, `cwnd_pkts`, `t_net`, `loss` for `adaptive`) |
