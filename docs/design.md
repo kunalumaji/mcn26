@@ -39,12 +39,17 @@ selected per process with `quicfile -policy:...` (environment variable
 
 Evaluated every `max(SRTT, 20 ms)` while ACKs are being received:
 
-1. **CPU pressure `P`** of the msquic worker thread that processes this connection's
-   ACKs, from `/proc/thread-self/schedstat`:
-   `P = (Δ on-CPU time + Δ runqueue-wait time) / Δ wall time`, smoothed (EWMA ½).
-   `P` is high both when the thread is saturated by its own work and when it is
-   starved by other load. System-wide utilisation would miss the second case for a
-   single thread on a many-core machine.
+1. **CPU pressure `P = max(P_thread, U_sys)`**, smoothed (EWMA ½):
+   - `P_thread`: pressure on the msquic worker thread that processes this
+     connection's ACKs, from `/proc/thread-self/schedstat`:
+     `(Δ on-CPU time + Δ runqueue-wait time) / Δ wall time`. High when QUIC itself
+     is CPU-bound (the LiteQUIC case) or starved by other load.
+   - `U_sys`: whole-machine CPU utilisation from `/proc/stat`. High when the server
+     is busy overall, so every cycle spent processing ACKs is taken from other work.
+
+   `U_sys` was added after the first test: at Wi-Fi rates the QUIC thread needs only
+   a fraction of a core and is scheduled promptly even on a fully loaded machine,
+   so `P_thread` stayed at 20–35% and the policy never reacted to high overall CPU.
 2. **Network ceiling** `T_net = cwnd_packets / K` (`K = 4`): congestion control
    still receives at least `K` ACKs per congestion window (LiteQUIC has no such bound).
 3. **Threshold** `T = 2 + (T_net − 2) · f(P)`, where `f` ramps linearly from 0 at
@@ -55,7 +60,7 @@ Evaluated every `max(SRTT, 20 ms)` while ACKs are being received:
 
 Tunable through environment variables: `MCN_ACK_PER_CWND` (`K`), `MCN_ACK_CPU_LO`,
 `MCN_ACK_CPU_HI`. With `-acklog:1` every decision is logged with its inputs
-(`cpu_pct`, `cwnd_pkts`, `t_net`, `loss`).
+(`cpu_pct`, `thread_cpu_pct`, `sys_cpu_pct`, `cwnd_pkts`, `t_net`, `loss`).
 
 **msquic receiver detail:** reaching `T` only *marks* an ACK as needed; the ACK is
 sent after the whole receive batch is processed. The effective ratio is therefore

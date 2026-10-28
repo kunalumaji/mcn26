@@ -6551,6 +6551,37 @@ QuicMcnReadThreadSchedStat(
 }
 
 //
+// Reads whole-machine busy and total CPU time (ticks) from /proc/stat.
+//
+static
+BOOLEAN
+QuicMcnReadSystemCpu(
+    _Out_ uint64_t* Busy,
+    _Out_ uint64_t* Total
+    )
+{
+    char Buffer[256];
+    int Fd = open("/proc/stat", O_RDONLY);
+    if (Fd < 0) {
+        return FALSE;
+    }
+    ssize_t Length = read(Fd, Buffer, sizeof(Buffer) - 1);
+    close(Fd);
+    if (Length <= 0) {
+        return FALSE;
+    }
+    Buffer[Length] = '\0';
+    unsigned long long V[8];
+    if (sscanf(Buffer, "cpu %llu %llu %llu %llu %llu %llu %llu %llu",
+               &V[0], &V[1], &V[2], &V[3], &V[4], &V[5], &V[6], &V[7]) != 8) {
+        return FALSE;
+    }
+    *Total = V[0] + V[1] + V[2] + V[3] + V[4] + V[5] + V[6] + V[7];
+    *Busy = *Total - V[3] - V[4]; // minus idle and iowait
+    return TRUE;
+}
+
+//
 // Starts a new measurement window for the adaptive policy on this thread.
 //
 static
@@ -6565,6 +6596,9 @@ QuicConnMcnAckAdaptiveReset(
     Connection->McnAck.CongestionCount = Connection->Stats.Send.CongestionCount;
     if (!QuicMcnReadThreadSchedStat(&Connection->McnAck.RunNs, &Connection->McnAck.WaitNs)) {
         Connection->McnAck.RunNs = Connection->McnAck.WaitNs = 0;
+    }
+    if (!QuicMcnReadSystemCpu(&Connection->McnAck.SysBusy, &Connection->McnAck.SysTotal)) {
+        Connection->McnAck.SysBusy = Connection->McnAck.SysTotal = 0;
     }
 }
 
@@ -6642,9 +6676,11 @@ QuicConnMcnAckLiteQuic(
 
 //
 // Adaptive (ours): once per max(smoothed RTT, 20 ms),
-//   P     = worker thread CPU pressure: (on-CPU + runqueue wait) / wall time,
-//           smoothed. High P means the thread processing ACKs is saturated or
-//           starved by other load, i.e. ACK processing competes for CPU.
+//   P     = max(thread pressure, machine utilisation), smoothed.
+//           Thread pressure = (on-CPU + runqueue wait) / wall time of the
+//           worker thread processing ACKs: high when QUIC itself is CPU-bound
+//           or starved. Machine utilisation (/proc/stat): high when the CPU is
+//           busy overall, so every cycle spent on ACKs is taken from other work.
 //   T_net = cwnd_packets / MCN_ACK_PER_CWND, so congestion control still gets
 //           at least MCN_ACK_PER_CWND ACKs per window.
 //   T     = 2 + (T_net - 2) * f(P), f ramping 0 -> 1 between CPU_LO and CPU_HI.
@@ -6667,15 +6703,20 @@ QuicConnMcnAckAdaptive(
     // CPU pressure. If the connection moved to another worker thread, the
     // counters are not comparable; start a fresh window.
     //
-    uint64_t RunNs, WaitNs;
+    uint64_t RunNs, WaitNs, SysBusy, SysTotal;
     if ((uint64_t)syscall(SYS_gettid) != Connection->McnAck.ThreadId ||
-        !QuicMcnReadThreadSchedStat(&RunNs, &WaitNs)) {
+        !QuicMcnReadThreadSchedStat(&RunNs, &WaitNs) ||
+        !QuicMcnReadSystemCpu(&SysBusy, &SysTotal)) {
         QuicConnMcnAckAdaptiveReset(Connection, Now);
         return;
     }
     uint64_t BusyNs =
         (RunNs - Connection->McnAck.RunNs) + (WaitNs - Connection->McnAck.WaitNs);
-    uint32_t SamplePct = (uint32_t)CXPLAT_MIN(100, BusyNs / 10 / Elapsed);
+    uint32_t ThreadPct = (uint32_t)CXPLAT_MIN(100, BusyNs / 10 / Elapsed);
+    uint64_t SysDelta = SysTotal - Connection->McnAck.SysTotal;
+    uint32_t SysPct =
+        SysDelta == 0 ? 0 : (uint32_t)(100 * (SysBusy - Connection->McnAck.SysBusy) / SysDelta);
+    uint32_t SamplePct = CXPLAT_MAX(ThreadPct, SysPct);
     uint32_t PressurePct = (Connection->McnAck.PressurePct + SamplePct) / 2;
     Connection->McnAck.PressurePct = PressurePct;
 
@@ -6711,13 +6752,16 @@ QuicConnMcnAckAdaptive(
     char Details[160];
     snprintf(
         Details, sizeof(Details),
-        "policy=adaptive cpu_pct=%u cpu_sample_pct=%u cwnd_pkts=%u t_net=%u loss=%u",
-        PressurePct, SamplePct, CwndPackets, NetCeiling, Loss ? 1 : 0);
+        "policy=adaptive cpu_pct=%u thread_cpu_pct=%u sys_cpu_pct=%u cwnd_pkts=%u "
+        "t_net=%u loss=%u",
+        PressurePct, ThreadPct, SysPct, CwndPackets, NetCeiling, Loss ? 1 : 0);
     QuicConnMcnAckSetThreshold(Connection, (uint8_t)Next, Details);
 
     Connection->McnAck.WindowStartUs = Now;
     Connection->McnAck.RunNs = RunNs;
     Connection->McnAck.WaitNs = WaitNs;
+    Connection->McnAck.SysBusy = SysBusy;
+    Connection->McnAck.SysTotal = SysTotal;
     Connection->McnAck.CongestionCount = Connection->Stats.Send.CongestionCount;
 }
 

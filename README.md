@@ -110,7 +110,7 @@ Each run writes `results/<timestamp>/`:
 | `meta.txt` | Settings, commits, hosts, kernels |
 | `client.log` / `server.log` | Raw `RESULT` / `SERVER` lines and the policies' decision log |
 | `runs.csv` | **One row per download**: goodput, transfer time, client and server process CPU (total and per MB), whole-machine CPU % on both sides, packets, ACKs, data packets per ACK, losses, RTT, mean ACK threshold |
-| `ack_decisions.csv` | Every threshold decision over time (`tag`, `t_ms`, `old`, `new`, and the policy's inputs, e.g. `cpu_pct`, `cwnd_pkts`, `t_net`, `loss` for `adaptive`) |
+| `ack_decisions.csv` | Every threshold decision over time (`tag`, `t_ms`, `old`, `new`, and the policy's inputs, e.g. `cpu_pct`, `thread_cpu_pct`, `sys_cpu_pct`, `cwnd_pkts`, `t_net`, `loss` for `adaptive`) |
 | `summary.csv` | Medians per (server load, policy, file); also printed at the end of the run |
 | `cpu_client.csv` / `cpu_server.csv` | CPU time series: `ts`, `sys_cpu_pct` (whole machine), `proc_cpu_pct` (`quicfile`, % of one core), `loadavg1` |
 

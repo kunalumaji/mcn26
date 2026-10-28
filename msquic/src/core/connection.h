@@ -510,11 +510,14 @@ typedef struct QUIC_CONNECTION {
         uint64_t Flushes;
         //
         // adaptive: worker thread CPU pressure from /proc/thread-self/schedstat
-        // (on-CPU + runqueue wait time) and loss events in this window.
+        // (on-CPU + runqueue wait time), whole-machine CPU from /proc/stat, and
+        // loss events in this window.
         //
         uint64_t ThreadId;
         uint64_t RunNs;
         uint64_t WaitNs;
+        uint64_t SysBusy;
+        uint64_t SysTotal;
         uint32_t PressurePct;   // Smoothed, 0-100.
         uint32_t CongestionCount;
     } McnAck;
