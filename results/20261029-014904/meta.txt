@@ -1,0 +1,8 @@
+date=2026-10-29T01:49:04+05:30
+server=kunal@10.21.232.3 cc=cubic reps=3
+files=20MB.bin 100MB.bin 500MB.bin 1GB.bin
+policies=default fixed:2 fixed:10 fixed:100 litequic adaptive
+server_loads=0 2x client_load=0
+client_commit=ee1f3f4 client_dirty=0 server_commit=ee1f3f4 server_dirty=0
+client_host=kunal-750XGK client_cores=12 client_kernel=7.0.0-38-generic
+server_host=netsys server_cores=28 server_kernel=7.0.0-38-generic

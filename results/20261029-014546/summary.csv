@@ -1,0 +1,7 @@
+server_load,spec,file,n,download_s,goodput_mbps,client_cpu_ms_per_mb,server_cpu_ms_per_mb,server_recv_ack_frames,data_pkts_per_ack,threshold_mean,server_lost_pkts,client_sys_cpu_pct,server_sys_cpu_pct
+0,fixed:2,100MB.bin,1,1.43,590.5,1.76,4.86,1647.0,44.52,2.0,1771.0,3.4,1.8
+0,adaptive,100MB.bin,1,1.14,745.3,1.59,3.2,1209.0,59.76,2.0,476.0,4.8,1.7
+0,adaptive+net,100MB.bin,1,1.2,702.0,1.65,3.89,1376.0,52.67,2.0,236.0,4.1,1.9
+2x,fixed:2,100MB.bin,1,1.14,743.1,1.56,1.71,1234.0,57.78,2.0,380.0,4.1,100.0
+2x,adaptive,100MB.bin,1,1.11,762.1,1.62,1.54,707.0,101.55,80.39,441.0,6.6,100.0
+2x,adaptive+net,100MB.bin,1,1.22,690.6,1.8,1.61,848.0,84.59,47.92,583.0,3.7,100.0
