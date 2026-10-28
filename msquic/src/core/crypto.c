@@ -492,6 +492,7 @@ QuicCryptoHandshakeConfirmed(
 {
     QUIC_CONNECTION* Connection = QuicCryptoGetConnection(Crypto);
     Connection->State.HandshakeConfirmed = TRUE;
+    QuicConnMcnAckOnHandshakeConfirmed(Connection); // MCN26
 
     if (SignalBinding) {
         QUIC_PATH* Path = &Connection->Paths[0];

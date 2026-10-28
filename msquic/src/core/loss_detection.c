@@ -1049,7 +1049,8 @@ QuicLossDetectionDetectAndHandleLostPackets(
         QuicLossValidate(LossDetection);
 
         if (LostRetransmittableBytes > 0) {
-            if (LossDetection->ProbeCount > QUIC_PERSISTENT_CONGESTION_THRESHOLD) {
+            if (QuicMcnAckPolicy() == MCN_ACK_POLICY_DEFAULT && // MCN26
+                LossDetection->ProbeCount > QUIC_PERSISTENT_CONGESTION_THRESHOLD) {
                 //
                 // On persistent congestion, reset the peer's packet tolerance
                 // back to the default.

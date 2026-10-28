@@ -1511,7 +1511,8 @@ QuicSendFlush(
         //
         QuicSendQueueFlush(&Connection->Send, REASON_SCHEDULING);
 
-        if (Builder.TotalCountDatagrams + 1 > Connection->PeerPacketTolerance) {
+        if (QuicMcnAckPolicy() == MCN_ACK_POLICY_DEFAULT && // MCN26
+            Builder.TotalCountDatagrams + 1 > Connection->PeerPacketTolerance) {
             //
             // We're scheduling limited, so we should tell the peer to use our
             // (max) batch size + 1 as the peer tolerance as a hint that they

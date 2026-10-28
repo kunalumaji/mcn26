@@ -499,6 +499,16 @@ typedef struct QUIC_CONNECTION {
     uint64_t SendAckFreqSeqNum;
 
     //
+    // MCN26: per-connection state for the LiteQUIC-style ACK frequency policy.
+    // Counts ACK frames processed per receive flush over one smoothed RTT.
+    //
+    struct {
+        uint64_t WindowStartUs;
+        uint64_t AckFrames;
+        uint64_t Flushes;
+    } McnAck;
+
+    //
     // The next ACK frequency sequence number we expect to receive.
     //
     uint64_t NextRecvAckFreqSeqNum;
@@ -1690,6 +1700,44 @@ void
 QuicConnUpdatePeerPacketTolerance(
     _In_ QUIC_CONNECTION* Connection,
     _In_ uint8_t NewPacketTolerance
+    );
+
+//
+// MCN26: ACK frequency policy, selected per process with environment variables
+// (set by the application before MsQuicOpen):
+//   MCN_ACK_POLICY    = default | fixed | litequic   (default: msquic unchanged)
+//   MCN_ACK_THRESHOLD = N   ack-eliciting threshold for 'fixed' (default 2)
+//   MCN_ACK_LOG       = 1   print threshold changes to stderr
+//
+typedef enum MCN_ACK_POLICY {
+    MCN_ACK_POLICY_DEFAULT,
+    MCN_ACK_POLICY_FIXED,
+    MCN_ACK_POLICY_LITEQUIC,
+} MCN_ACK_POLICY;
+
+MCN_ACK_POLICY
+QuicMcnAckPolicy(
+    void
+    );
+
+//
+// MCN26: applies the selected policy once the handshake is confirmed.
+//
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+QuicConnMcnAckOnHandshakeConfirmed(
+    _In_ QUIC_CONNECTION* Connection
+    );
+
+//
+// MCN26: called after each receive flush with the number of ACK frames it
+// processed; drives the LiteQUIC-style adaptation.
+//
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+QuicConnMcnAckOnRecvFlush(
+    _In_ QUIC_CONNECTION* Connection,
+    _In_ uint64_t AckFrames
     );
 
 //
