@@ -2,20 +2,23 @@
  * quicfile: minimal file download over msquic for the MCN26 experiments.
  *
  *   quicfile server -dir:<path> -cert:<file> -key:<file> [-port:4433]
- *   quicfile client -target:<ip> -file:<name> [-port:4433] [-out:<path>]
+ *   quicfile client -target:<ip> -file:<name> [-port:4433] [-out:<path>] [-tag:<id>]
  *
  * Common options:
- *   -policy:default|fixed|litequic   ACK frequency policy. The data sender (server)
+ *   -policy:default|fixed|litequic|adaptive
+ *                                    ACK frequency policy. The data sender (server)
  *                                    is the side that applies it.
  *   -threshold:<N>                   ACK threshold for -policy:fixed (default 2)
  *   -cc:cubic|bbr                    congestion control (default cubic)
- *   -acklog:1                        print ACK threshold changes to stderr
+ *   -acklog:1                        print ACK policy decisions to stderr
  *
- * Protocol: the client opens one bidirectional stream and sends the file name
+ * Protocol: the client opens one bidirectional stream and sends "<file> <tag>"
  * with FIN; the server replies with the file contents and FIN.
  *
  * The client prints one "RESULT key=value ..." line per download; the server
- * prints one "SERVER key=value ..." line per connection.
+ * prints one "SERVER key=value ..." line per connection. Both carry the tag,
+ * so the two can be joined. sys_cpu_pct is whole-machine CPU utilisation over
+ * the transfer (from /proc/stat); cpu_ms is this process's CPU time.
  */
 
 #define _GNU_SOURCE
@@ -77,6 +80,41 @@ ProcessCpuMs(void)
 }
 
 //
+// Whole-machine CPU counters from the first line of /proc/stat (in ticks).
+//
+typedef struct SYS_CPU {
+    unsigned long long Busy;
+    unsigned long long Total;
+} SYS_CPU;
+
+static SYS_CPU
+SystemCpu(void)
+{
+    SYS_CPU Cpu = {0, 0};
+    unsigned long long V[8] = {0};
+    FILE* F = fopen("/proc/stat", "r");
+    if (F != NULL) {
+        if (fscanf(F, "cpu %llu %llu %llu %llu %llu %llu %llu %llu",
+                   &V[0], &V[1], &V[2], &V[3], &V[4], &V[5], &V[6], &V[7]) == 8) {
+            for (int i = 0; i < 8; ++i) {
+                Cpu.Total += V[i];
+            }
+            Cpu.Busy = Cpu.Total - V[3] - V[4]; // minus idle and iowait
+        }
+        fclose(F);
+    }
+    return Cpu;
+}
+
+static double
+SystemCpuPct(SYS_CPU Start)
+{
+    SYS_CPU End = SystemCpu();
+    return End.Total > Start.Total ?
+        100.0 * (End.Busy - Start.Busy) / (End.Total - Start.Total) : 0;
+}
+
+//
 // Applies -policy/-threshold/-acklog. msquic reads these environment variables
 // (see QuicMcnAckPolicy in msquic/src/core/connection.c), so this must run
 // before MsQuicOpen2.
@@ -89,8 +127,8 @@ ApplyAckPolicy(int argc, char** argv)
         Policy = "default";
     }
     if (strcmp(Policy, "default") != 0 && strcmp(Policy, "fixed") != 0 &&
-        strcmp(Policy, "litequic") != 0) {
-        fprintf(stderr, "Unknown -policy:%s (default|fixed|litequic)\n", Policy);
+        strcmp(Policy, "litequic") != 0 && strcmp(Policy, "adaptive") != 0) {
+        fprintf(stderr, "Unknown -policy:%s (default|fixed|litequic|adaptive)\n", Policy);
         return -1;
     }
     setenv("MCN_ACK_POLICY", Policy, 1);
@@ -145,20 +183,25 @@ PrintStats(const char* Prefix, HQUIC Connection)
 // Server
 //
 
+typedef struct SERVER_CONN {
+    double StartCpuMs;
+    double StartMs;
+    SYS_CPU StartSys;
+    char File[MAX_NAME + 1];
+    char Tag[MAX_NAME + 1];
+    uint64_t Bytes;
+} SERVER_CONN;
+
 typedef struct SERVER_STREAM {
     HQUIC Stream;
-    char Name[MAX_NAME + 1];
+    SERVER_CONN* Conn;
+    char Name[MAX_NAME + 1]; // Request: "<file> <tag>"
     size_t NameLength;
     int Fd;
     uint64_t Size;
     uint64_t Offset;
     QUIC_BUFFER Buffers[SEND_SLOTS];
 } SERVER_STREAM;
-
-typedef struct SERVER_CONN {
-    double StartCpuMs;
-    double StartMs;
-} SERVER_CONN;
 
 static const char* ServeDir;
 
@@ -189,7 +232,13 @@ ServerStartFile(SERVER_STREAM* Ctx)
     char Path[4096];
     struct stat St;
     Ctx->Name[Ctx->NameLength] = '\0';
-    if (Ctx->NameLength == 0 || strchr(Ctx->Name, '/') != NULL ||
+    char* Tag = strchr(Ctx->Name, ' ');
+    if (Tag != NULL) {
+        *Tag++ = '\0';
+        snprintf(Ctx->Conn->Tag, sizeof(Ctx->Conn->Tag), "%s", Tag);
+    }
+    snprintf(Ctx->Conn->File, sizeof(Ctx->Conn->File), "%s", Ctx->Name);
+    if (Ctx->Name[0] == '\0' || strchr(Ctx->Name, '/') != NULL ||
         strcmp(Ctx->Name, "..") == 0 ||
         snprintf(Path, sizeof(Path), "%s/%s", ServeDir, Ctx->Name) >= (int)sizeof(Path) ||
         (Ctx->Fd = open(Path, O_RDONLY)) < 0 ||
@@ -199,6 +248,7 @@ ServerStartFile(SERVER_STREAM* Ctx)
         return;
     }
     Ctx->Size = (uint64_t)St.st_size;
+    Ctx->Conn->Bytes = Ctx->Size;
     if (Ctx->Size == 0) {
         MsQuic->StreamShutdown(Ctx->Stream, QUIC_STREAM_SHUTDOWN_FLAG_GRACEFUL, 0);
         return;
@@ -263,6 +313,7 @@ ServerConnectionCallback(HQUIC Connection, void* Context, QUIC_CONNECTION_EVENT*
             return QUIC_STATUS_OUT_OF_MEMORY;
         }
         Ctx->Stream = Event->PEER_STREAM_STARTED.Stream;
+        Ctx->Conn = Conn;
         Ctx->Fd = -1;
         // Buffers left NULL on allocation failure are freed (free(NULL)) on shutdown.
         MsQuic->SetCallbackHandler(Ctx->Stream, (void*)ServerStreamCallback, Ctx);
@@ -279,10 +330,16 @@ ServerConnectionCallback(HQUIC Connection, void* Context, QUIC_CONNECTION_EVENT*
     case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_PEER:
         break;
     case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
-        printf("SERVER policy=%s duration_ms=%.1f cpu_ms=%.1f ",
+        printf("SERVER tag=%s file=%s bytes=%llu policy=%s conn=%p duration_ms=%.1f "
+               "cpu_ms=%.1f sys_cpu_pct=%.1f ",
+               Conn->Tag[0] ? Conn->Tag : "-",
+               Conn->File[0] ? Conn->File : "-",
+               (unsigned long long)Conn->Bytes,
                getenv("MCN_ACK_POLICY"),
+               (void*)Connection,
                NowMs() - Conn->StartMs,
-               ProcessCpuMs() - Conn->StartCpuMs);
+               ProcessCpuMs() - Conn->StartCpuMs,
+               SystemCpuPct(Conn->StartSys));
         PrintStats("server", Connection);
         printf("\n");
         fflush(stdout);
@@ -309,6 +366,7 @@ ServerListenerCallback(HQUIC Listener, void* Context, QUIC_LISTENER_EVENT* Event
     }
     Conn->StartMs = NowMs();
     Conn->StartCpuMs = ProcessCpuMs();
+    Conn->StartSys = SystemCpu();
     HQUIC Connection = Event->NEW_CONNECTION.Connection;
     MsQuic->SetCallbackHandler(Connection, (void*)ServerConnectionCallback, Conn);
     return MsQuic->ConnectionSetConfiguration(Connection, Configuration);
@@ -381,6 +439,9 @@ RunServer(int argc, char** argv)
 
 typedef struct CLIENT {
     const char* File;
+    const char* Tag;
+    char Request[2 * MAX_NAME + 2];
+    SYS_CPU StartSys;
     int OutFd;
     uint64_t Bytes;
     double StartMs;
@@ -457,8 +518,8 @@ ClientConnectionCallback(HQUIC Connection, void* Context, QUIC_CONNECTION_EVENT*
         Client->ConnectedMs = NowMs();
         HQUIC Stream;
         static QUIC_BUFFER Request;
-        Request.Buffer = (uint8_t*)Client->File;
-        Request.Length = (uint32_t)strlen(Client->File);
+        Request.Buffer = (uint8_t*)Client->Request;
+        Request.Length = (uint32_t)strlen(Client->Request);
         if (QUIC_FAILED(MsQuic->StreamOpen(
                 Connection, QUIC_STREAM_OPEN_FLAG_NONE, ClientStreamCallback, Client, &Stream)) ||
             QUIC_FAILED(MsQuic->StreamStart(Stream, QUIC_STREAM_START_FLAG_NONE))) {
@@ -493,11 +554,20 @@ RunClient(int argc, char** argv)
     const char* Out = GetArg(argc, argv, "out");
     CLIENT Client = {0};
     Client.File = GetArg(argc, argv, "file");
+    Client.Tag = GetArg(argc, argv, "tag");
     Client.OutFd = -1;
     if (Target == NULL || Client.File == NULL) {
         fprintf(stderr, "client needs -target and -file\n");
         return 1;
     }
+    if (Client.Tag == NULL) {
+        Client.Tag = "-";
+    }
+    if (strlen(Client.File) > MAX_NAME || strchr(Client.Tag, ' ') != NULL) {
+        fprintf(stderr, "-file too long or -tag contains a space\n");
+        return 1;
+    }
+    snprintf(Client.Request, sizeof(Client.Request), "%s %s", Client.File, Client.Tag);
     if (Out != NULL &&
         (Client.OutFd = open(Out, O_WRONLY | O_CREAT | O_TRUNC, 0644)) < 0) {
         fprintf(stderr, "Cannot open %s: %s\n", Out, strerror(errno));
@@ -533,6 +603,7 @@ RunClient(int argc, char** argv)
 
     Client.StartMs = NowMs();
     Client.StartCpuMs = ProcessCpuMs();
+    Client.StartSys = SystemCpu();
     if (QUIC_FAILED(Status = MsQuic->ConnectionStart(
             Connection, Configuration, QUIC_ADDRESS_FAMILY_UNSPEC, Target,
             PortArg ? (uint16_t)atoi(PortArg) : DEFAULT_PORT))) {
@@ -546,14 +617,15 @@ RunClient(int argc, char** argv)
     //
     ClientWait(&Client, &Client.Done);
     double CpuMs = ProcessCpuMs() - Client.StartCpuMs;
+    double SysCpuPct = SystemCpuPct(Client.StartSys);
 
     if (Client.Succeeded) {
         double TransferMs = Client.DoneMs - Client.RequestMs;
-        printf("RESULT file=%s bytes=%llu policy=%s handshake_ms=%.2f transfer_ms=%.2f "
-               "goodput_mbps=%.1f cpu_ms=%.1f ",
-               Client.File, (unsigned long long)Client.Bytes, getenv("MCN_ACK_POLICY"),
-               Client.ConnectedMs - Client.StartMs, TransferMs,
-               Client.Bytes * 8 / (TransferMs * 1e3), CpuMs);
+        printf("RESULT tag=%s file=%s bytes=%llu policy=%s handshake_ms=%.2f transfer_ms=%.2f "
+               "goodput_mbps=%.1f cpu_ms=%.1f sys_cpu_pct=%.1f ",
+               Client.Tag, Client.File, (unsigned long long)Client.Bytes,
+               getenv("MCN_ACK_POLICY"), Client.ConnectedMs - Client.StartMs, TransferMs,
+               Client.Bytes * 8 / (TransferMs * 1e3), CpuMs, SysCpuPct);
         PrintStats("client", Connection);
         printf("\n");
         fflush(stdout);
@@ -574,8 +646,8 @@ main(int argc, char** argv)
     if (argc < 2 || (strcmp(argv[1], "server") != 0 && strcmp(argv[1], "client") != 0)) {
         fprintf(stderr,
             "usage: %s server -dir:<path> -cert:<file> -key:<file> [-port:N] [options]\n"
-            "       %s client -target:<ip> -file:<name> [-port:N] [-out:<path>] [options]\n"
-            "options: -policy:default|fixed|litequic -threshold:N -cc:cubic|bbr -acklog:1\n",
+            "       %s client -target:<ip> -file:<name> [-port:N] [-out:<path>] [-tag:<id>] [options]\n"
+            "options: -policy:default|fixed|litequic|adaptive -threshold:N -cc:cubic|bbr -acklog:1\n",
             argv[0], argv[0]);
         return 1;
     }
