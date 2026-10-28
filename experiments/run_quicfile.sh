@@ -76,16 +76,20 @@ remote "cd $SERVER_ROOT && setsid -f python3 scripts/cpumon.py --out /tmp/mcn-cp
 python3 "$ROOT/scripts/cpumon.py" --out "$OUT/cpu_client.csv" & LOCAL_PIDS+=($!)
 
 # One server per policy, each on its own port, so runs can be interleaved.
-port=$BASE_PORT
+# Logs are appended so a restarted server keeps its earlier output.
 declare -A PORT
-for spec in $POLICIES; do
-    policy="${spec%%:*}"
-    threshold=""
+start_server() {
+    local spec="$1" port="${PORT[$1]}" policy="${1%%:*}" threshold=""
     [[ "$spec" == *:* ]] && threshold="-threshold:${spec#*:}"
     remote "cd $SERVER_ROOT && setsid -f build/msquic/bin/Release/quicfile server \
         -dir:data/files -cert:data/cert.pem -key:data/key.pem -port:$port -cc:$CC \
-        -policy:$policy $threshold -acklog:1 > /tmp/mcn-qf-$port.log 2>&1 < /dev/null"
+        -policy:$policy $threshold -acklog:1 >> /tmp/mcn-qf-$port.log 2>&1 < /dev/null"
+}
+port=$BASE_PORT
+for spec in $POLICIES; do
     PORT[$spec]=$port
+    remote "rm -f /tmp/mcn-qf-$port.log"
+    start_server "$spec"
     port=$((port + 1))
 done
 sleep 1
@@ -113,6 +117,16 @@ for load in $SERVER_LOADS; do
                 end=$(date +%s.%N)
                 echo "load=$load spec=$spec rep=$rep start_ts=$start end_ts=$end $line" \
                     | tee -a "$OUT/client.log" | cut -c1-200
+                # A failed download may leave its server unusable (seen once: a
+                # server stopped completing handshakes). Restart it so later
+                # runs of this policy are not lost, and record the restart.
+                if [[ "$line" == *FAILED* ]]; then
+                    remote "pkill -u \$USER -f '[q]uicfile server .*-port:${PORT[$spec]} '" || true
+                    sleep 1
+                    start_server "$spec"
+                    echo "$(date -Is) restarted server spec=$spec after tag=$tag" \
+                        | tee -a "$OUT/restarts.log"
+                fi
                 sleep 1
             done
         done
