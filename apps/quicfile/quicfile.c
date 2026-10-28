@@ -9,6 +9,8 @@
  *                                    ACK frequency policy. The data sender (server)
  *                                    is the side that applies it.
  *   -threshold:<N>                   ACK threshold for -policy:fixed (default 2)
+ *   -acknet:0|1                      adaptive: also use network conditions (default 0)
+ *   -ackmax:<N>                      adaptive: highest threshold (default 100)
  *   -cc:cubic|bbr                    congestion control (default cubic)
  *   -acklog:1                        print ACK policy decisions to stderr
  *
@@ -17,8 +19,11 @@
  *
  * The client prints one "RESULT key=value ..." line per download; the server
  * prints one "SERVER key=value ..." line per connection. Both carry the tag,
- * so the two can be joined. sys_cpu_pct is whole-machine CPU utilisation over
- * the transfer (from /proc/stat); cpu_ms is this process's CPU time.
+ * so the two can be joined. Client timings: download_ms = connection start to
+ * last byte (what a user waits for), handshake_ms, ttfb_ms = request to first
+ * byte, transfer_ms = request to last byte. sys_cpu_pct is whole-machine CPU
+ * utilisation over the transfer (from /proc/stat); cpu_ms is this process's
+ * CPU time.
  */
 
 #define _GNU_SOURCE
@@ -115,7 +120,7 @@ SystemCpuPct(SYS_CPU Start)
 }
 
 //
-// Applies -policy/-threshold/-acklog. msquic reads these environment variables
+// Applies -policy/-threshold/-acknet/-ackmax/-acklog. msquic reads these environment variables
 // (see QuicMcnAckPolicy in msquic/src/core/connection.c), so this must run
 // before MsQuicOpen2.
 //
@@ -133,13 +138,20 @@ ApplyAckPolicy(int argc, char** argv)
     }
     setenv("MCN_ACK_POLICY", Policy, 1);
 
-    const char* Threshold = GetArg(argc, argv, "threshold");
-    if (Threshold != NULL) {
-        setenv("MCN_ACK_THRESHOLD", Threshold, 1);
+    static const struct { const char* Arg; const char* Env; } Passthrough[] = {
+        { "threshold", "MCN_ACK_THRESHOLD" },
+        { "acknet", "MCN_ACK_NET" },
+        { "ackmax", "MCN_ACK_MAX" },
+        { "acklog", "MCN_ACK_LOG" },
+    };
+    for (size_t i = 0; i < sizeof(Passthrough) / sizeof(Passthrough[0]); ++i) {
+        const char* Value = GetArg(argc, argv, Passthrough[i].Arg);
+        if (Value != NULL) {
+            setenv(Passthrough[i].Env, Value, 1);
+        }
     }
-    const char* Log = GetArg(argc, argv, "acklog");
-    if (Log != NULL) {
-        setenv("MCN_ACK_LOG", Log, 1);
+    if (getenv("MCN_ACK_NET") == NULL) {
+        setenv("MCN_ACK_NET", "0", 1);
     }
     return 0;
 }
@@ -330,12 +342,13 @@ ServerConnectionCallback(HQUIC Connection, void* Context, QUIC_CONNECTION_EVENT*
     case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_PEER:
         break;
     case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
-        printf("SERVER tag=%s file=%s bytes=%llu policy=%s conn=%p duration_ms=%.1f "
+        printf("SERVER tag=%s file=%s bytes=%llu policy=%s acknet=%s conn=%p duration_ms=%.1f "
                "cpu_ms=%.1f sys_cpu_pct=%.1f ",
                Conn->Tag[0] ? Conn->Tag : "-",
                Conn->File[0] ? Conn->File : "-",
                (unsigned long long)Conn->Bytes,
                getenv("MCN_ACK_POLICY"),
+               getenv("MCN_ACK_NET"),
                (void*)Connection,
                NowMs() - Conn->StartMs,
                ProcessCpuMs() - Conn->StartCpuMs,
@@ -447,6 +460,7 @@ typedef struct CLIENT {
     double StartMs;
     double ConnectedMs;
     double RequestMs;
+    double FirstByteMs;
     double DoneMs;
     double StartCpuMs;
     int Succeeded;
@@ -481,6 +495,9 @@ ClientStreamCallback(HQUIC Stream, void* Context, QUIC_STREAM_EVENT* Event)
     CLIENT* Client = (CLIENT*)Context;
     switch (Event->Type) {
     case QUIC_STREAM_EVENT_RECEIVE:
+        if (Client->FirstByteMs == 0 && Event->RECEIVE.TotalBufferLength > 0) {
+            Client->FirstByteMs = NowMs();
+        }
         for (uint32_t i = 0; i < Event->RECEIVE.BufferCount; ++i) {
             const QUIC_BUFFER* B = &Event->RECEIVE.Buffers[i];
             if (Client->OutFd >= 0 &&
@@ -621,10 +638,12 @@ RunClient(int argc, char** argv)
 
     if (Client.Succeeded) {
         double TransferMs = Client.DoneMs - Client.RequestMs;
-        printf("RESULT tag=%s file=%s bytes=%llu policy=%s handshake_ms=%.2f transfer_ms=%.2f "
-               "goodput_mbps=%.1f cpu_ms=%.1f sys_cpu_pct=%.1f ",
+        printf("RESULT tag=%s file=%s bytes=%llu policy=%s download_ms=%.2f handshake_ms=%.2f "
+               "ttfb_ms=%.2f transfer_ms=%.2f goodput_mbps=%.1f cpu_ms=%.1f sys_cpu_pct=%.1f ",
                Client.Tag, Client.File, (unsigned long long)Client.Bytes,
-               getenv("MCN_ACK_POLICY"), Client.ConnectedMs - Client.StartMs, TransferMs,
+               getenv("MCN_ACK_POLICY"), Client.DoneMs - Client.StartMs,
+               Client.ConnectedMs - Client.StartMs,
+               Client.FirstByteMs ? Client.FirstByteMs - Client.RequestMs : 0, TransferMs,
                Client.Bytes * 8 / (TransferMs * 1e3), CpuMs, SysCpuPct);
         PrintStats("client", Connection);
         printf("\n");
@@ -647,7 +666,8 @@ main(int argc, char** argv)
         fprintf(stderr,
             "usage: %s server -dir:<path> -cert:<file> -key:<file> [-port:N] [options]\n"
             "       %s client -target:<ip> -file:<name> [-port:N] [-out:<path>] [-tag:<id>] [options]\n"
-            "options: -policy:default|fixed|litequic|adaptive -threshold:N -cc:cubic|bbr -acklog:1\n",
+            "options: -policy:default|fixed|litequic|adaptive -threshold:N -acknet:0|1 -ackmax:N\n"
+            "         -cc:cubic|bbr -acklog:1\n",
             argv[0], argv[0]);
         return 1;
     }

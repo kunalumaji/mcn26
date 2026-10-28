@@ -33,34 +33,37 @@ selected per process with `quicfile -policy:...` (environment variable
 | `default` | Unchanged msquic: raises `T` to its send batch size + 1 when scheduling-limited, resets to 2 on persistent congestion |
 | `fixed:N` | `T = N` for the whole connection (`fixed:2` is the RFC 9000 behaviour) |
 | `litequic` | LiteQUIC (MM'24): once per SRTT, `ACK_avg` = ACK frames per receive flush. `ACK_avg ≥ 2` → `T = T × ACK_avg`, else `T = max(T/2, 2)` |
-| `adaptive` | **Ours**, described below |
+| `adaptive` | **Ours, CPU only**: `T` scales with CPU pressure up to a fixed maximum (100) |
+| `adaptive` + `-acknet:1` | **Ours, CPU + network**: the maximum comes from cwnd, queueing delay and loss |
 
-### `adaptive`: CPU-pressure-scaled threshold with a network ceiling
+### `adaptive`
 
-Evaluated every `max(SRTT, 20 ms)` while ACKs are being received:
+The full algorithm, with a worked example, is in the README section
+[How `adaptive` calculates the threshold](../README.md#how-adaptive-calculates-the-threshold).
+In short, every `max(SRTT, 20 ms)`:
 
-1. **CPU pressure `P = max(P_thread, U_sys)`**, smoothed (EWMA ½):
-   - `P_thread`: pressure on the msquic worker thread that processes this
-     connection's ACKs, from `/proc/thread-self/schedstat`:
-     `(Δ on-CPU time + Δ runqueue-wait time) / Δ wall time`. High when QUIC itself
-     is CPU-bound (the LiteQUIC case) or starved by other load.
-   - `U_sys`: whole-machine CPU utilisation from `/proc/stat`. High when the server
-     is busy overall, so every cycle spent processing ACKs is taken from other work.
+`T = 2 + (C − 2) · f(P)`, increases capped at 2× per window, where
 
-   `U_sys` was added after the first test: at Wi-Fi rates the QUIC thread needs only
-   a fraction of a core and is scheduled promptly even on a fully loaded machine,
-   so `P_thread` stayed at 20–35% and the policy never reacted to high overall CPU.
-2. **Network ceiling** `T_net = cwnd_packets / K` (`K = 4`): congestion control
-   still receives at least `K` ACKs per congestion window (LiteQUIC has no such bound).
-3. **Threshold** `T = 2 + (T_net − 2) · f(P)`, where `f` ramps linearly from 0 at
-   `P = 50%` to 1 at `P = 90%`. Idle CPU → frequent ACKs (best feedback);
-   loaded CPU → as few ACKs as the network ceiling allows.
-4. **Safety:** on a congestion event in the window, `T ≤ max(T_current/2, 2)`.
-   Increases are capped at 2× per window; decreases apply at once.
+- `P = max(QUIC thread pressure, whole-machine CPU)`, smoothed;
+  `f(P)` ramps 0 → 1 between 50% and 90%;
+- `C = 100` (CPU only), or with `-acknet:1`: `C = cwnd_packets / 4`, halved while the
+  path is queueing (SRTT > 2× min RTT and > min RTT + 5 ms), within `[2, 100]`;
+  a loss in the window also caps `T` at half its current value.
 
-Tunable through environment variables: `MCN_ACK_PER_CWND` (`K`), `MCN_ACK_CPU_LO`,
-`MCN_ACK_CPU_HI`. With `-acklog:1` every decision is logged with its inputs
-(`cpu_pct`, `thread_cpu_pct`, `sys_cpu_pct`, `cwnd_pkts`, `t_net`, `loss`).
+Design rationale and history:
+- **Two CPU signals.** The first version used only the QUIC thread's pressure
+  (`(on-CPU + runqueue wait) / wall time`). At Wi-Fi rates the thread needs only a
+  fraction of a core and is scheduled promptly even on a fully loaded machine, so it
+  stayed at 20–35% and the policy never reacted to high overall CPU. Whole-machine
+  utilisation was added: when the server is busy, ACK work is taken from other work.
+- **Network as an option.** `-acknet:1` separates the contribution of network
+  awareness: with it off, `adaptive` is a pure CPU-driven policy that can be compared
+  with `fixed:100` (same maximum) and `litequic`.
+- **`cwnd / 4` ceiling.** Keeps at least 4 ACKs per congestion window, so congestion
+  control and loss detection keep getting feedback; LiteQUIC has no such bound.
+- **Queueing condition.** Requires both 2× inflation *and* 5 ms of extra delay: on
+  LAN/loopback the minimum RTT is tens of microseconds, so the ratio alone is
+  triggered by any jitter.
 
 **msquic receiver detail:** reaching `T` only *marks* an ACK as needed; the ACK is
 sent after the whole receive batch is processed. The effective ratio is therefore
@@ -73,7 +76,7 @@ high packet rates.
 2. Fixed thresholds: `fixed:10`, `fixed:100`
 3. msquic's built-in heuristic: `default` (see [msquic-notes.md](msquic-notes.md))
 4. LiteQUIC's adaptive rule: `litequic`
-5. Our approach: `adaptive`
+5. Our approach: `adaptive` (CPU only) and `adaptive` + `-acknet:1` (CPU + network)
 
 ## Open questions
 

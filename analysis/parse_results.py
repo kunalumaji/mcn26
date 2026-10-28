@@ -68,6 +68,16 @@ def parse_server(path):
     return servers, decisions
 
 
+def download_seconds(c):
+    """Connection start to last byte. Older logs lack download_ms; there it is
+    handshake + transfer (the request is sent as soon as the handshake ends)."""
+    if num(c.get("download_ms")) is not None:
+        return num(c["download_ms"]) / 1000
+    if num(c.get("handshake_ms")) is not None and num(c.get("transfer_ms")) is not None:
+        return (num(c["handshake_ms"]) + num(c["transfer_ms"])) / 1000
+    return None
+
+
 def mean_threshold(decisions, duration_ms):
     """Time-weighted mean threshold over the connection."""
     if not decisions:
@@ -111,9 +121,11 @@ def main():
             "start_ts": c["start_ts"],
             "end_ts": c["end_ts"],
             "bytes": bytes_,
+            "download_s": download_seconds(c),
             "goodput_mbps": num(c.get("goodput_mbps")),
             "transfer_ms": num(c.get("transfer_ms")),
             "handshake_ms": num(c.get("handshake_ms")),
+            "ttfb_ms": num(c.get("ttfb_ms")),
             "client_cpu_ms": client_cpu,
             "client_cpu_ms_per_mb": client_cpu / mb if client_cpu and mb else None,
             "client_sys_cpu_pct": num(c.get("sys_cpu_pct")),
@@ -145,7 +157,7 @@ def main():
         writer.writeheader()
         writer.writerows(decisions)
 
-    metrics = ["goodput_mbps", "client_cpu_ms_per_mb", "server_cpu_ms_per_mb",
+    metrics = ["download_s", "goodput_mbps", "client_cpu_ms_per_mb", "server_cpu_ms_per_mb",
                "server_recv_ack_frames", "data_pkts_per_ack", "threshold_mean",
                "server_lost_pkts", "client_sys_cpu_pct", "server_sys_cpu_pct"]
     groups = defaultdict(list)
@@ -169,7 +181,7 @@ def main():
 
     failed = sum(1 for r in rows if not r["ok"])
     print(f"{len(rows)} downloads ({failed} failed), {len(decisions)} ACK decisions")
-    cols = ["server_load", "file", "spec", "n", "goodput_mbps", "client_cpu_ms_per_mb",
+    cols = ["server_load", "file", "spec", "n", "download_s", "goodput_mbps", "client_cpu_ms_per_mb",
             "server_cpu_ms_per_mb", "data_pkts_per_ack", "threshold_mean", "server_sys_cpu_pct"]
     widths = [max(len(c), *(len(str(e[c])) for e in summary)) for c in cols] if summary else []
     print("  ".join(c.ljust(w) for c, w in zip(cols, widths)))

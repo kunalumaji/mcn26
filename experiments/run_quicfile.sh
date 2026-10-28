@@ -5,7 +5,9 @@
 #
 # Environment (defaults in brackets):
 #   FILES          files in data/files on the server  [20MB.bin 100MB.bin 500MB.bin 1GB.bin]
-#   POLICIES       policy[:threshold] specs  [default fixed:2 fixed:10 fixed:100 litequic adaptive]
+#   POLICIES       policy specs: default, fixed:N, litequic, adaptive (CPU only),
+#                  adaptive+net (CPU + network)
+#                  [default fixed:2 fixed:10 fixed:100 litequic adaptive adaptive+net]
 #   SERVER_LOADS   server CPU load levels for scripts/cpu-load.sh (N or Kx; 0 = none)  [0 2x]
 #   CLIENT_LOAD    client CPU load during all runs (same format)  [0]
 #   REPS           repetitions per (load, file, policy)  [3]
@@ -22,7 +24,7 @@ SERVER="${SERVER:-kunal@10.21.232.3}"
 SERVER_IP="${SERVER_IP:-${SERVER#*@}}"
 SERVER_ROOT="${SERVER_ROOT:-Documents/mcn26}"
 FILES="${FILES:-20MB.bin 100MB.bin 500MB.bin 1GB.bin}"
-POLICIES="${POLICIES:-default fixed:2 fixed:10 fixed:100 litequic adaptive}"
+POLICIES="${POLICIES:-default fixed:2 fixed:10 fixed:100 litequic adaptive adaptive+net}"
 SERVER_LOADS="${SERVER_LOADS:-0 2x}"
 CLIENT_LOAD="${CLIENT_LOAD:-0}"
 REPS="${REPS:-3}"
@@ -78,12 +80,18 @@ python3 "$ROOT/scripts/cpumon.py" --out "$OUT/cpu_client.csv" & LOCAL_PIDS+=($!)
 # One server per policy, each on its own port, so runs can be interleaved.
 # Logs are appended so a restarted server keeps its earlier output.
 declare -A PORT
+# Spec -> quicfile options: fixed:N -> -policy:fixed -threshold:N,
+# adaptive+net -> -policy:adaptive -acknet:1.
 start_server() {
-    local spec="$1" port="${PORT[$1]}" policy="${1%%:*}" threshold=""
-    [[ "$spec" == *:* ]] && threshold="-threshold:${spec#*:}"
+    local spec="$1" port="${PORT[$1]}" policy="${1%%:*}" extra=""
+    [[ "$spec" == *:* ]] && extra="-threshold:${spec#*:}"
+    if [[ "$policy" == "adaptive+net" ]]; then
+        policy=adaptive
+        extra="-acknet:1"
+    fi
     remote "cd $SERVER_ROOT && setsid -f build/msquic/bin/Release/quicfile server \
         -dir:data/files -cert:data/cert.pem -key:data/key.pem -port:$port -cc:$CC \
-        -policy:$policy $threshold -acklog:1 >> /tmp/mcn-qf-$port.log 2>&1 < /dev/null"
+        -policy:$policy $extra -acklog:1 >> /tmp/mcn-qf-$port.log 2>&1 < /dev/null"
 }
 port=$BASE_PORT
 for spec in $POLICIES; do
