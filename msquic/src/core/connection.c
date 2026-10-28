@@ -32,6 +32,7 @@ Abstract:
 --*/
 
 #include "precomp.h"
+#include <fcntl.h> // MCN26: /proc/thread-self/schedstat (Linux only)
 #ifdef QUIC_CLOG
 #include "connection.c.clog.h"
 #endif
@@ -6423,16 +6424,36 @@ QuicConnUpdatePeerPacketTolerance(
 }
 
 //
-// MCN26: ACK frequency policy selection and the LiteQUIC-style controller
-// (Bi et al., ACM MM'24, Sec. 4.2).
+// MCN26: ACK frequency policy selection and controllers.
+//   litequic: LiteQUIC rule (Bi et al., ACM MM'24, Sec. 4.2).
+//   adaptive: our policy; threshold scales with worker-thread CPU pressure,
+//             capped by a congestion-window-based network ceiling.
 //
 
 #define MCN_ACK_MIN_THRESHOLD 2
+#define MCN_ACK_ADAPTIVE_MIN_WINDOW_US 20000
 
 static MCN_ACK_POLICY McnAckPolicy;
 static uint8_t McnAckFixedThreshold = MCN_ACK_MIN_THRESHOLD;
+static uint32_t McnAckPerCwnd = 4;
+static uint32_t McnAckCpuLoPct = 50;
+static uint32_t McnAckCpuHiPct = 90;
 static BOOLEAN McnAckLog;
 static BOOLEAN McnAckInitialized;
+
+static
+long
+QuicMcnAckEnvInt(
+    _In_z_ const char* Name,
+    _In_ long Default,
+    _In_ long Min,
+    _In_ long Max
+    )
+{
+    const char* Value = getenv(Name);
+    long Result = Value != NULL ? strtol(Value, NULL, 10) : Default;
+    return Result < Min ? Min : (Result > Max ? Max : Result);
+}
 
 static
 void
@@ -6445,20 +6466,18 @@ QuicMcnAckInitialize(
         McnAckPolicy = MCN_ACK_POLICY_FIXED;
     } else if (Policy != NULL && strcmp(Policy, "litequic") == 0) {
         McnAckPolicy = MCN_ACK_POLICY_LITEQUIC;
+    } else if (Policy != NULL && strcmp(Policy, "adaptive") == 0) {
+        McnAckPolicy = MCN_ACK_POLICY_ADAPTIVE;
     } else {
         McnAckPolicy = MCN_ACK_POLICY_DEFAULT;
     }
 
-    const char* Threshold = getenv("MCN_ACK_THRESHOLD");
-    if (Threshold != NULL) {
-        long Value = strtol(Threshold, NULL, 10);
-        if (Value < 1) {
-            Value = 1;
-        } else if (Value > UINT8_MAX) {
-            Value = UINT8_MAX;
-        }
-        McnAckFixedThreshold = (uint8_t)Value;
-    }
+    McnAckFixedThreshold =
+        (uint8_t)QuicMcnAckEnvInt("MCN_ACK_THRESHOLD", MCN_ACK_MIN_THRESHOLD, 1, UINT8_MAX);
+    McnAckPerCwnd = (uint32_t)QuicMcnAckEnvInt("MCN_ACK_PER_CWND", 4, 1, 64);
+    McnAckCpuLoPct = (uint32_t)QuicMcnAckEnvInt("MCN_ACK_CPU_LO", 50, 0, 99);
+    McnAckCpuHiPct =
+        (uint32_t)QuicMcnAckEnvInt("MCN_ACK_CPU_HI", 90, (long)McnAckCpuLoPct + 1, 100);
 
     const char* Log = getenv("MCN_ACK_LOG");
     McnAckLog = Log != NULL && strcmp(Log, "1") == 0;
@@ -6476,25 +6495,77 @@ QuicMcnAckPolicy(
     return McnAckPolicy;
 }
 
+//
+// Sets the peer's threshold. With MCN_ACK_LOG=1, every decision is printed as
+// one key=value line (Details holds the policy-specific inputs).
+//
 static
 void
 QuicConnMcnAckSetThreshold(
     _In_ QUIC_CONNECTION* Connection,
     _In_ uint8_t Threshold,
-    _In_ const char* Reason
+    _In_z_ const char* Details
     )
 {
-    if (McnAckLog && Threshold != Connection->PeerPacketTolerance) {
+    if (McnAckLog) {
         fprintf(
             stderr,
-            "[mcn] conn=%p t_ms=%llu threshold %u -> %u (%s)\n",
+            "[mcn] conn=%p t_ms=%llu old=%u new=%u %s\n",
             (void*)Connection,
             (unsigned long long)US_TO_MS(CxPlatTimeUs64() - Connection->Stats.Timing.Start),
             Connection->PeerPacketTolerance,
             Threshold,
-            Reason);
+            Details);
     }
     QuicConnUpdatePeerPacketTolerance(Connection, Threshold);
+}
+
+//
+// Reads the calling thread's on-CPU and runqueue-wait times (ns).
+//
+static
+BOOLEAN
+QuicMcnReadThreadSchedStat(
+    _Out_ uint64_t* RunNs,
+    _Out_ uint64_t* WaitNs
+    )
+{
+    char Buffer[128];
+    int Fd = open("/proc/thread-self/schedstat", O_RDONLY);
+    if (Fd < 0) {
+        return FALSE;
+    }
+    ssize_t Length = read(Fd, Buffer, sizeof(Buffer) - 1);
+    close(Fd);
+    if (Length <= 0) {
+        return FALSE;
+    }
+    Buffer[Length] = '\0';
+    unsigned long long Run, Wait;
+    if (sscanf(Buffer, "%llu %llu", &Run, &Wait) != 2) {
+        return FALSE;
+    }
+    *RunNs = Run;
+    *WaitNs = Wait;
+    return TRUE;
+}
+
+//
+// Starts a new measurement window for the adaptive policy on this thread.
+//
+static
+void
+QuicConnMcnAckAdaptiveReset(
+    _In_ QUIC_CONNECTION* Connection,
+    _In_ uint64_t Now
+    )
+{
+    Connection->McnAck.WindowStartUs = Now;
+    Connection->McnAck.ThreadId = (uint64_t)syscall(SYS_gettid);
+    Connection->McnAck.CongestionCount = Connection->Stats.Send.CongestionCount;
+    if (!QuicMcnReadThreadSchedStat(&Connection->McnAck.RunNs, &Connection->McnAck.WaitNs)) {
+        Connection->McnAck.RunNs = Connection->McnAck.WaitNs = 0;
+    }
 }
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
@@ -6505,17 +6576,149 @@ QuicConnMcnAckOnHandshakeConfirmed(
 {
     switch (QuicMcnAckPolicy()) {
     case MCN_ACK_POLICY_FIXED:
-        QuicConnMcnAckSetThreshold(Connection, McnAckFixedThreshold, "fixed");
+        QuicConnMcnAckSetThreshold(Connection, McnAckFixedThreshold, "policy=fixed");
         break;
     case MCN_ACK_POLICY_LITEQUIC:
         Connection->McnAck.WindowStartUs = CxPlatTimeUs64();
         Connection->McnAck.AckFrames = 0;
         Connection->McnAck.Flushes = 0;
-        QuicConnMcnAckSetThreshold(Connection, MCN_ACK_MIN_THRESHOLD, "litequic start");
+        QuicConnMcnAckSetThreshold(
+            Connection, MCN_ACK_MIN_THRESHOLD, "policy=litequic reason=start");
+        break;
+    case MCN_ACK_POLICY_ADAPTIVE:
+        Connection->McnAck.PressurePct = 0;
+        QuicConnMcnAckAdaptiveReset(Connection, CxPlatTimeUs64());
+        QuicConnMcnAckSetThreshold(
+            Connection, MCN_ACK_MIN_THRESHOLD, "policy=adaptive reason=start");
         break;
     default:
         break;
     }
+}
+
+//
+// LiteQUIC: once per smoothed RTT, ACK_avg = ACK frames per receive flush.
+// ACK_avg >= 2 means ACKs queue up faster than we process them (CPU-limited):
+// T = T * ACK_avg. Otherwise (bandwidth-limited): T = max(T / 2, 2).
+//
+static
+void
+QuicConnMcnAckLiteQuic(
+    _In_ QUIC_CONNECTION* Connection,
+    _In_ uint64_t AckFrames
+    )
+{
+    Connection->McnAck.AckFrames += AckFrames;
+    Connection->McnAck.Flushes++;
+
+    uint64_t Now = CxPlatTimeUs64();
+    if (Now - Connection->McnAck.WindowStartUs < Connection->Paths[0].SmoothedRtt) {
+        return;
+    }
+
+    uint64_t Current = Connection->PeerPacketTolerance;
+    uint64_t AckAvgX100 =
+        100 * Connection->McnAck.AckFrames / Connection->McnAck.Flushes;
+    uint64_t Next;
+    const char* Reason;
+    if (AckAvgX100 >= 200) {
+        Next = CXPLAT_MIN(Current * AckAvgX100 / 100, UINT8_MAX);
+        Reason = "cpu-limited";
+    } else {
+        Next = CXPLAT_MAX(Current / 2, MCN_ACK_MIN_THRESHOLD);
+        Reason = "bw-limited";
+    }
+
+    char Details[96];
+    snprintf(
+        Details, sizeof(Details), "policy=litequic ack_avg=%.2f reason=%s",
+        AckAvgX100 / 100.0, Reason);
+    QuicConnMcnAckSetThreshold(Connection, (uint8_t)Next, Details);
+
+    Connection->McnAck.WindowStartUs = Now;
+    Connection->McnAck.AckFrames = 0;
+    Connection->McnAck.Flushes = 0;
+}
+
+//
+// Adaptive (ours): once per max(smoothed RTT, 20 ms),
+//   P     = worker thread CPU pressure: (on-CPU + runqueue wait) / wall time,
+//           smoothed. High P means the thread processing ACKs is saturated or
+//           starved by other load, i.e. ACK processing competes for CPU.
+//   T_net = cwnd_packets / MCN_ACK_PER_CWND, so congestion control still gets
+//           at least MCN_ACK_PER_CWND ACKs per window.
+//   T     = 2 + (T_net - 2) * f(P), f ramping 0 -> 1 between CPU_LO and CPU_HI.
+// On loss T is at most half the current value; increases are limited to 2x
+// per window, decreases apply at once.
+//
+static
+void
+QuicConnMcnAckAdaptive(
+    _In_ QUIC_CONNECTION* Connection
+    )
+{
+    uint64_t Now = CxPlatTimeUs64();
+    uint64_t Elapsed = Now - Connection->McnAck.WindowStartUs;
+    if (Elapsed < CXPLAT_MAX(Connection->Paths[0].SmoothedRtt, MCN_ACK_ADAPTIVE_MIN_WINDOW_US)) {
+        return;
+    }
+
+    //
+    // CPU pressure. If the connection moved to another worker thread, the
+    // counters are not comparable; start a fresh window.
+    //
+    uint64_t RunNs, WaitNs;
+    if ((uint64_t)syscall(SYS_gettid) != Connection->McnAck.ThreadId ||
+        !QuicMcnReadThreadSchedStat(&RunNs, &WaitNs)) {
+        QuicConnMcnAckAdaptiveReset(Connection, Now);
+        return;
+    }
+    uint64_t BusyNs =
+        (RunNs - Connection->McnAck.RunNs) + (WaitNs - Connection->McnAck.WaitNs);
+    uint32_t SamplePct = (uint32_t)CXPLAT_MIN(100, BusyNs / 10 / Elapsed);
+    uint32_t PressurePct = (Connection->McnAck.PressurePct + SamplePct) / 2;
+    Connection->McnAck.PressurePct = PressurePct;
+
+    //
+    // Network ceiling.
+    //
+    uint32_t PayloadSize = QuicPathGetDatagramPayloadSize(&Connection->Paths[0]);
+    uint32_t CwndPackets =
+        QuicCongestionControlGetCongestionWindow(&Connection->CongestionControl) / PayloadSize;
+    uint32_t NetCeiling =
+        CXPLAT_MAX(MCN_ACK_MIN_THRESHOLD, CXPLAT_MIN(UINT8_MAX, CwndPackets / McnAckPerCwnd));
+    BOOLEAN Loss = Connection->Stats.Send.CongestionCount != Connection->McnAck.CongestionCount;
+
+    //
+    // Scale between the minimum and the ceiling by CPU pressure.
+    //
+    uint32_t Scale; // 0-100
+    if (PressurePct <= McnAckCpuLoPct) {
+        Scale = 0;
+    } else if (PressurePct >= McnAckCpuHiPct) {
+        Scale = 100;
+    } else {
+        Scale = 100 * (PressurePct - McnAckCpuLoPct) / (McnAckCpuHiPct - McnAckCpuLoPct);
+    }
+    uint32_t Current = Connection->PeerPacketTolerance;
+    uint32_t Target =
+        MCN_ACK_MIN_THRESHOLD + (NetCeiling - MCN_ACK_MIN_THRESHOLD) * Scale / 100;
+    if (Loss) {
+        Target = CXPLAT_MIN(Target, CXPLAT_MAX(Current / 2, MCN_ACK_MIN_THRESHOLD));
+    }
+    uint32_t Next = CXPLAT_MIN(Target, 2 * Current);
+
+    char Details[160];
+    snprintf(
+        Details, sizeof(Details),
+        "policy=adaptive cpu_pct=%u cpu_sample_pct=%u cwnd_pkts=%u t_net=%u loss=%u",
+        PressurePct, SamplePct, CwndPackets, NetCeiling, Loss ? 1 : 0);
+    QuicConnMcnAckSetThreshold(Connection, (uint8_t)Next, Details);
+
+    Connection->McnAck.WindowStartUs = Now;
+    Connection->McnAck.RunNs = RunNs;
+    Connection->McnAck.WaitNs = WaitNs;
+    Connection->McnAck.CongestionCount = Connection->Stats.Send.CongestionCount;
 }
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
@@ -6525,44 +6728,20 @@ QuicConnMcnAckOnRecvFlush(
     _In_ uint64_t AckFrames
     )
 {
-    if (QuicMcnAckPolicy() != MCN_ACK_POLICY_LITEQUIC ||
-        !Connection->State.HandshakeConfirmed ||
-        AckFrames == 0) {
+    if (!Connection->State.HandshakeConfirmed || AckFrames == 0) {
         return;
     }
 
-    Connection->McnAck.AckFrames += AckFrames;
-    Connection->McnAck.Flushes++;
-
-    //
-    // Evaluate once per smoothed RTT. ACK_avg = ACK frames per receive flush.
-    // ACK_avg >= 2 means ACKs queue up faster than we process them
-    // (CPU-limited): T = T * ACK_avg. Otherwise (bandwidth-limited):
-    // T = max(T / 2, 2).
-    //
-    uint64_t Now = CxPlatTimeUs64();
-    if (Now - Connection->McnAck.WindowStartUs < Connection->Paths[0].SmoothedRtt) {
-        return;
+    switch (QuicMcnAckPolicy()) {
+    case MCN_ACK_POLICY_LITEQUIC:
+        QuicConnMcnAckLiteQuic(Connection, AckFrames);
+        break;
+    case MCN_ACK_POLICY_ADAPTIVE:
+        QuicConnMcnAckAdaptive(Connection);
+        break;
+    default:
+        break;
     }
-
-    uint64_t Current = Connection->PeerPacketTolerance;
-    uint64_t Next;
-    const char* Reason;
-    if (Connection->McnAck.AckFrames >= 2 * Connection->McnAck.Flushes) {
-        Next = Current * Connection->McnAck.AckFrames / Connection->McnAck.Flushes;
-        if (Next > UINT8_MAX) {
-            Next = UINT8_MAX;
-        }
-        Reason = "cpu-limited";
-    } else {
-        Next = CXPLAT_MAX(Current / 2, MCN_ACK_MIN_THRESHOLD);
-        Reason = "bw-limited";
-    }
-    QuicConnMcnAckSetThreshold(Connection, (uint8_t)Next, Reason);
-
-    Connection->McnAck.WindowStartUs = Now;
-    Connection->McnAck.AckFrames = 0;
-    Connection->McnAck.Flushes = 0;
 }
 
 #define QUIC_CONN_BAD_START_STATE(CONN) (CONN->State.Started || CONN->State.ClosedLocally)

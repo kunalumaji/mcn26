@@ -499,13 +499,24 @@ typedef struct QUIC_CONNECTION {
     uint64_t SendAckFreqSeqNum;
 
     //
-    // MCN26: per-connection state for the LiteQUIC-style ACK frequency policy.
-    // Counts ACK frames processed per receive flush over one smoothed RTT.
+    // MCN26: per-connection state for the adaptive ACK frequency policies.
     //
     struct {
         uint64_t WindowStartUs;
+        //
+        // litequic: ACK frames processed per receive flush in this window.
+        //
         uint64_t AckFrames;
         uint64_t Flushes;
+        //
+        // adaptive: worker thread CPU pressure from /proc/thread-self/schedstat
+        // (on-CPU + runqueue wait time) and loss events in this window.
+        //
+        uint64_t ThreadId;
+        uint64_t RunNs;
+        uint64_t WaitNs;
+        uint32_t PressurePct;   // Smoothed, 0-100.
+        uint32_t CongestionCount;
     } McnAck;
 
     //
@@ -1705,14 +1716,19 @@ QuicConnUpdatePeerPacketTolerance(
 //
 // MCN26: ACK frequency policy, selected per process with environment variables
 // (set by the application before MsQuicOpen):
-//   MCN_ACK_POLICY    = default | fixed | litequic   (default: msquic unchanged)
+//   MCN_ACK_POLICY    = default | fixed | litequic | adaptive
+//                       (default: msquic unchanged)
 //   MCN_ACK_THRESHOLD = N   ack-eliciting threshold for 'fixed' (default 2)
-//   MCN_ACK_LOG       = 1   print threshold changes to stderr
+//   MCN_ACK_PER_CWND  = N   adaptive: minimum ACKs per congestion window (default 4)
+//   MCN_ACK_CPU_LO    = %   adaptive: CPU pressure where thresholds start rising (default 50)
+//   MCN_ACK_CPU_HI    = %   adaptive: CPU pressure for the full network ceiling (default 90)
+//   MCN_ACK_LOG       = 1   print policy decisions to stderr
 //
 typedef enum MCN_ACK_POLICY {
     MCN_ACK_POLICY_DEFAULT,
     MCN_ACK_POLICY_FIXED,
     MCN_ACK_POLICY_LITEQUIC,
+    MCN_ACK_POLICY_ADAPTIVE,
 } MCN_ACK_POLICY;
 
 MCN_ACK_POLICY
@@ -1731,7 +1747,7 @@ QuicConnMcnAckOnHandshakeConfirmed(
 
 //
 // MCN26: called after each receive flush with the number of ACK frames it
-// processed; drives the LiteQUIC-style adaptation.
+// processed; drives the litequic and adaptive policies.
 //
 _IRQL_requires_max_(PASSIVE_LEVEL)
 void

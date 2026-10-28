@@ -491,8 +491,10 @@ QuicCryptoHandshakeConfirmed(
     )
 {
     QUIC_CONNECTION* Connection = QuicCryptoGetConnection(Crypto);
-    Connection->State.HandshakeConfirmed = TRUE;
-    QuicConnMcnAckOnHandshakeConfirmed(Connection); // MCN26
+    if (!Connection->State.HandshakeConfirmed) { // MCN26: may be called more than once
+        Connection->State.HandshakeConfirmed = TRUE;
+        QuicConnMcnAckOnHandshakeConfirmed(Connection);
+    }
 
     if (SignalBinding) {
         QUIC_PATH* Path = &Connection->Paths[0];
