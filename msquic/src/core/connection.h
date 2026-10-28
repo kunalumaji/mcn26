@@ -1722,9 +1722,11 @@ QuicConnUpdatePeerPacketTolerance(
 //   MCN_ACK_POLICY    = default | fixed | litequic | adaptive
 //                       (default: msquic unchanged)
 //   MCN_ACK_THRESHOLD = N   ack-eliciting threshold for 'fixed' (default 2)
-//   MCN_ACK_PER_CWND  = N   adaptive: minimum ACKs per congestion window (default 4)
+//   MCN_ACK_MAX       = N   adaptive: highest threshold it may choose (default 100)
 //   MCN_ACK_CPU_LO    = %   adaptive: CPU pressure where thresholds start rising (default 50)
-//   MCN_ACK_CPU_HI    = %   adaptive: CPU pressure for the full network ceiling (default 90)
+//   MCN_ACK_CPU_HI    = %   adaptive: CPU pressure for the full ceiling (default 90)
+//   MCN_ACK_NET       = 1   adaptive: also use network conditions (default 0, CPU only)
+//   MCN_ACK_PER_CWND  = N   adaptive+net: minimum ACKs per congestion window (default 4)
 //   MCN_ACK_LOG       = 1   print policy decisions to stderr
 //
 typedef enum MCN_ACK_POLICY {

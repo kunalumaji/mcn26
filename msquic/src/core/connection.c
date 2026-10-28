@@ -6432,12 +6432,15 @@ QuicConnUpdatePeerPacketTolerance(
 
 #define MCN_ACK_MIN_THRESHOLD 2
 #define MCN_ACK_ADAPTIVE_MIN_WINDOW_US 20000
+#define MCN_ACK_QUEUE_DELAY_US 5000 // Queueing needs SRTT > 2 x min RTT and > min RTT + 5 ms
 
 static MCN_ACK_POLICY McnAckPolicy;
 static uint8_t McnAckFixedThreshold = MCN_ACK_MIN_THRESHOLD;
+static uint32_t McnAckMax = 100;
 static uint32_t McnAckPerCwnd = 4;
 static uint32_t McnAckCpuLoPct = 50;
 static uint32_t McnAckCpuHiPct = 90;
+static BOOLEAN McnAckNet;
 static BOOLEAN McnAckLog;
 static BOOLEAN McnAckInitialized;
 
@@ -6474,6 +6477,9 @@ QuicMcnAckInitialize(
 
     McnAckFixedThreshold =
         (uint8_t)QuicMcnAckEnvInt("MCN_ACK_THRESHOLD", MCN_ACK_MIN_THRESHOLD, 1, UINT8_MAX);
+    McnAckMax =
+        (uint32_t)QuicMcnAckEnvInt("MCN_ACK_MAX", 100, MCN_ACK_MIN_THRESHOLD, UINT8_MAX);
+    McnAckNet = QuicMcnAckEnvInt("MCN_ACK_NET", 0, 0, 1) == 1;
     McnAckPerCwnd = (uint32_t)QuicMcnAckEnvInt("MCN_ACK_PER_CWND", 4, 1, 64);
     McnAckCpuLoPct = (uint32_t)QuicMcnAckEnvInt("MCN_ACK_CPU_LO", 50, 0, 99);
     McnAckCpuHiPct =
@@ -6681,11 +6687,15 @@ QuicConnMcnAckLiteQuic(
 //           worker thread processing ACKs: high when QUIC itself is CPU-bound
 //           or starved. Machine utilisation (/proc/stat): high when the CPU is
 //           busy overall, so every cycle spent on ACKs is taken from other work.
-//   T_net = cwnd_packets / MCN_ACK_PER_CWND, so congestion control still gets
-//           at least MCN_ACK_PER_CWND ACKs per window.
-//   T     = 2 + (T_net - 2) * f(P), f ramping 0 -> 1 between CPU_LO and CPU_HI.
-// On loss T is at most half the current value; increases are limited to 2x
-// per window, decreases apply at once.
+//   C     = ceiling: MCN_ACK_MAX, or with MCN_ACK_NET=1 the network ceiling
+//           min(MCN_ACK_MAX, T_net) where
+//             T_net = cwnd_packets / MCN_ACK_PER_CWND (congestion control
+//                     still gets at least that many ACKs per window),
+//             halved while queueing (SRTT > 2 x min RTT and > min RTT + 5 ms):
+//                     keep feedback timely while the path is congested.
+//   T     = 2 + (C - 2) * f(P), f ramping 0 -> 1 between CPU_LO and CPU_HI.
+// With MCN_ACK_NET=1, a congestion event in the window also caps T at half the
+// current value. Increases are limited to 2x per window, decreases apply at once.
 //
 static
 void
@@ -6721,14 +6731,25 @@ QuicConnMcnAckAdaptive(
     Connection->McnAck.PressurePct = PressurePct;
 
     //
-    // Network ceiling.
+    // Ceiling: fixed maximum, or (with MCN_ACK_NET) derived from the network.
+    // The network inputs are computed either way so they are always logged.
     //
-    uint32_t PayloadSize = QuicPathGetDatagramPayloadSize(&Connection->Paths[0]);
+    const QUIC_PATH* Path = &Connection->Paths[0];
+    uint32_t PayloadSize = QuicPathGetDatagramPayloadSize(Path);
     uint32_t CwndPackets =
         QuicCongestionControlGetCongestionWindow(&Connection->CongestionControl) / PayloadSize;
-    uint32_t NetCeiling =
-        CXPLAT_MAX(MCN_ACK_MIN_THRESHOLD, CXPLAT_MIN(UINT8_MAX, CwndPackets / McnAckPerCwnd));
+    uint32_t NetCeiling = CwndPackets / McnAckPerCwnd;
+    uint32_t RttInflationPct =
+        Path->MinRtt == 0 ? 100 : (uint32_t)CXPLAT_MIN(10000, 100 * Path->SmoothedRtt / Path->MinRtt);
+    BOOLEAN Queueing =
+        RttInflationPct > 200 &&
+        Path->SmoothedRtt > Path->MinRtt + MCN_ACK_QUEUE_DELAY_US;
+    if (Queueing) {
+        NetCeiling /= 2;
+    }
+    NetCeiling = CXPLAT_MAX(MCN_ACK_MIN_THRESHOLD, CXPLAT_MIN(McnAckMax, NetCeiling));
     BOOLEAN Loss = Connection->Stats.Send.CongestionCount != Connection->McnAck.CongestionCount;
+    uint32_t Ceiling = McnAckNet ? NetCeiling : McnAckMax;
 
     //
     // Scale between the minimum and the ceiling by CPU pressure.
@@ -6743,18 +6764,21 @@ QuicConnMcnAckAdaptive(
     }
     uint32_t Current = Connection->PeerPacketTolerance;
     uint32_t Target =
-        MCN_ACK_MIN_THRESHOLD + (NetCeiling - MCN_ACK_MIN_THRESHOLD) * Scale / 100;
-    if (Loss) {
+        MCN_ACK_MIN_THRESHOLD + (Ceiling - MCN_ACK_MIN_THRESHOLD) * Scale / 100;
+    if (McnAckNet && Loss) {
         Target = CXPLAT_MIN(Target, CXPLAT_MAX(Current / 2, MCN_ACK_MIN_THRESHOLD));
     }
     uint32_t Next = CXPLAT_MIN(Target, 2 * Current);
 
-    char Details[160];
+    char Details[200];
     snprintf(
         Details, sizeof(Details),
-        "policy=adaptive cpu_pct=%u thread_cpu_pct=%u sys_cpu_pct=%u cwnd_pkts=%u "
-        "t_net=%u loss=%u",
-        PressurePct, ThreadPct, SysPct, CwndPackets, NetCeiling, Loss ? 1 : 0);
+        "policy=adaptive net=%u cpu_pct=%u thread_cpu_pct=%u sys_cpu_pct=%u scale_pct=%u "
+        "ceiling=%u cwnd_pkts=%u t_net=%u srtt_us=%llu min_rtt_us=%llu queueing=%u loss=%u",
+        McnAckNet ? 1 : 0, PressurePct, ThreadPct, SysPct, Scale,
+        Ceiling, CwndPackets, NetCeiling,
+        (unsigned long long)Path->SmoothedRtt, (unsigned long long)Path->MinRtt,
+        Queueing ? 1 : 0, Loss ? 1 : 0);
     QuicConnMcnAckSetThreshold(Connection, (uint8_t)Next, Details);
 
     Connection->McnAck.WindowStartUs = Now;
