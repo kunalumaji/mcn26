@@ -1,222 +1,258 @@
-# mcn26: Reducing QUIC ACK Overhead
+# mcn26: Adaptive ACK Frequency for QUIC
 
-Modern Networks course project. QUIC spends a large share of CPU on ACK
-processing at high rates ([Zhang et al., WWW'24](https://arxiv.org/abs/2310.09423);
-[LiteQUIC, MM'24](https://doi.org/10.1145/3664647.3681670)). We study how to
-reduce ACK frequency without hurting throughput, using the QUIC ACK Frequency
-extension ([draft-ietf-quic-ack-frequency](https://datatracker.ietf.org/doc/draft-ietf-quic-ack-frequency/)).
+Modern Networks course project (team: Kunal Umaji, Kaveenraj G, Aravindh Sriram Kumar A G).
 
-**Status:** ACK policies `default`, `fixed:N`, `litequic` and our `adaptive`
-policy (CPU only, or CPU + network with `-acknet:1`) are implemented in msquic and
-evaluated with file downloads under CPU load. See [ACK policies](#ack-policies) below
-and [docs/design.md](docs/design.md).
+**Full write-up: [docs/report.md](docs/report.md).**
 
-## Layout
+## The problem in one paragraph
 
-| Path | Contents |
+QUIC runs in user space and encrypts everything, including acknowledgements (ACKs).
+Every ACK costs CPU twice: the receiver must build, encrypt and send it, and the sender
+must receive, decrypt and process it. Studies found that this is a main reason QUIC is
+slower and more CPU-hungry than TCP on fast links ([Zhang et al., WWW'24](https://arxiv.org/abs/2310.09423);
+[LiteQUIC, MM'24](https://doi.org/10.1145/3664647.3681670)). The IETF
+[ACK Frequency extension](https://datatracker.ietf.org/doc/draft-ietf-quic-ack-frequency/)
+lets the data sender ask the receiver to ACK less often, but it does not say *how often*.
+Fewer ACKs save CPU, but too few starve congestion control and loss detection of feedback.
+**This project builds and evaluates policies that choose the ACK frequency dynamically from
+CPU and network conditions**, inside Microsoft's QUIC implementation, msquic.
+
+## Key terms
+
+| Term | Meaning |
 |---|---|
-| `msquic/` | Vendored [microsoft/msquic](https://github.com/microsoft/msquic) `v2.6.3` (commit `16ca4d8`) with our ACK policies (search for `MCN26`) |
-| `apps/quicfile/` | File download client/server on msquic, used for the evaluation |
-| `scripts/` | `setup.sh` (build), `make-testdata.sh` (test files + cert), `cpu-load.sh` (CPU load), `cpumon.py` (CPU logging) |
-| `experiments/` | `run_quicfile.sh`: the evaluation runner |
-| `analysis/` | `parse_results.py`: turns a run into CSVs |
-| `results/` | One folder per evaluation run |
-| `docs/` | Design notes, BibTeX |
-| `proposal/` | Course proposal |
+| **ACK threshold `T`** | The receiver sends an ACK after every `T` ack-eliciting packets. RFC 9000 default: `T = 2` |
+| **Max ACK delay** | If fewer than `T` packets arrive, the receiver still ACKs after this delay (25 ms in msquic) |
+| **Reordering threshold** | A gap of this many packets makes the receiver ACK immediately (msquic default 1: any gap) |
+| **`ACK_FREQUENCY` frame** | Carries the three values above from the data sender to the receiver |
+| **Policy** | The rule the server (data sender) uses to choose these values during a connection |
 
-## Build (Linux)
+## What we built
 
-```bash
-git clone <repo-url> mcn26 && cd mcn26
-scripts/setup.sh                 # INSTALL_DEPS=1 to apt-install dependencies first
-```
+| Component | Where | What it does |
+|---|---|---|
+| ACK policies | `msquic/src/core/connection.c` (search `MCN26`) | `default`, `fixed:N`, `litequic` (reimplementation of LiteQUIC's rule), our `adaptive` |
+| Policy modifiers | same | `+phase` (slow-start/recovery aware), `+reorder` (reordering threshold 3), `+delay` (RTT-scaled max ACK delay), `+net` (network ceiling for `adaptive`) |
+| ACK-cost instrumentation | `connection.c`, `send.c` | Measures time spent in the receive path, ACK processing and the send path, per connection |
+| `quicfile` | `apps/quicfile/` | File download client/server on msquic; the policy is a command-line option |
+| Evaluation pipeline | `scripts/`, `experiments/`, `analysis/` | Test data, CPU load, CPU logging, a runner that drives both machines, CSVs, plots |
 
-This builds msquic, `secnetperf` and `quicfile` into `build/msquic/bin/Release/`.
-On first run it also downloads quictls (msquic's TLS library) into
-`msquic/submodules/quictls/`; it is not stored in the repo.
+### The policies
 
-Requirements: CMake ≥ 3.16, GCC, Ninja, `libssl-dev`, `libnuma-dev`, `openssl`, Python 3
-(standard library only). Sources plus build take about 250 MB of disk; the test files 1.6 GB.
-
-## ACK policies
-
-A QUIC receiver sends an ACK after every **threshold `T`** ack-eliciting packets
-(RFC 9000: `T = 2`), or when its delayed-ACK timer fires (25 ms in msquic). With
-the [ACK Frequency extension](https://datatracker.ietf.org/doc/draft-ietf-quic-ack-frequency/)
-the **data sender** can tell the receiver which `T` to use by sending an
-`ACK_FREQUENCY` frame. A larger `T` means fewer ACKs: less CPU spent creating,
-encrypting, sending, receiving and processing them, but less timely feedback for
-congestion control and loss detection.
-
-In our evaluation the server sends the file, so **the server chooses `T`** and the
-client (the receiver) follows it. The policy is chosen per server process:
+In a download the **server sends data and chooses `T`**; the client (receiver) follows it.
 
 | Policy | How the server chooses `T` |
 |---|---|
-| `default` | msquic's built-in behaviour (raises `T` to its send batch size + 1 when it can't send fast enough) |
+| `default` | msquic's built-in behaviour (raises `T` to its send batch size + 1 when it cannot send fast enough) |
 | `fixed:N` | `T = N` for the whole connection. `fixed:2` is the RFC 9000 behaviour |
-| `litequic` | LiteQUIC (MM'24): once per RTT, `ACK_avg` = ACK frames processed per receive batch. `ACK_avg ≥ 2` (treated as CPU-limited): `T = T × ACK_avg`; otherwise `T = max(T/2, 2)` |
-| `adaptive` | **Ours, CPU only**: `T` rises with CPU pressure, up to a fixed maximum |
-| `adaptive` + `-acknet:1` | **Ours, CPU + network** (`adaptive+net` in the runner): the maximum comes from network conditions instead |
+| `litequic` | LiteQUIC's rule: once per RTT, `ACK_avg` = ACK frames processed per receive batch. `ACK_avg ≥ 2` (taken as CPU-limited): `T = T × ACK_avg`; otherwise `T = max(T/2, 2)` |
+| `adaptive` | **Ours**: `T` rises with CPU pressure, from 2 (idle) to 100 (busy). Details below |
 
-### How `adaptive` calculates the threshold
+**Modifiers** can be added to `fixed`, `litequic` and `adaptive` (runner syntax `policy+modifier+...`):
 
-The server re-evaluates `T` every `max(smoothed RTT, 20 ms)` while it is receiving ACKs.
+| Modifier | Rule | Why |
+|---|---|---|
+| `+net` | `adaptive` only: the maximum `T` comes from the path: `cwnd_packets / 4`, halved while packets queue (smoothed RTT > 2× min RTT and > min RTT + 5 ms), and `T` halves on loss | Congestion control keeps at least 4 ACKs per window |
+| `+phase` | Cubic slow start: `T ≤ max(2, cwnd_packets / 4)`; loss recovery: `T = 2` | A large `T` with a small window makes the receiver wait for its 25 ms timer in every slow-start round |
+| `+reorder` | Reordering threshold 3 instead of 1 | The sender can only declare a packet lost after 3 later packets are acknowledged (RFC 9002), so ACKs for smaller gaps are wasted |
+| `+delay` | Max ACK delay `= SRTT / 4`, between 1 and 25 ms | The timer fallback should scale with the path, not be a fixed 25 ms |
 
-**Step 1: CPU pressure `P` (0–100%)**, the higher of two measurements over the last window:
-- **QUIC thread pressure**: for the msquic thread that processes this connection's ACKs,
-  `(time running + time waiting for a CPU) / elapsed time`, from
-  `/proc/thread-self/schedstat`. Near 100% when QUIC itself is CPU-bound or starved.
-- **Whole-machine utilisation**, from `/proc/stat`. Near 100% when the server is busy
-  overall, so every cycle spent on ACKs is taken from other work.
+### How `adaptive` calculates `T`
 
-`P` is smoothed: `P = (P_previous + P_new) / 2`.
+Every `max(smoothed RTT, 20 ms)` while ACKs arrive, the server:
 
-**Step 2: CPU scale `f(P)` (0–1)**: `0` below 50%, `1` above 90%, linear in between
-(`f = (P − 50) / 40`).
+1. **Measures CPU pressure `P`** (0–100%), the higher of:
+   - **QUIC thread pressure**: for the msquic thread processing this connection,
+     `(time running + time waiting for a CPU) / elapsed time` (`/proc/thread-self/schedstat`);
+   - **whole-machine CPU utilisation** (`/proc/stat`): when the server is busy, every cycle
+     spent on ACKs is taken from other work.
 
-**Step 3: ceiling `C`**, the largest `T` allowed:
-- **CPU only** (`-acknet:0`, the default): `C = 100` (`-ackmax:N` to change).
-- **CPU + network** (`-acknet:1`): `C` comes from the path:
-  1. `C = cwnd_packets / 4`: the congestion window in packets divided by 4, so that
-     congestion control still receives at least 4 ACKs per window.
-  2. If the path is **queueing** (smoothed RTT > 2 × minimum RTT *and* more than
-     5 ms above it), `C` is halved: when the path is congested, feedback must stay timely.
-  3. `C` is kept between 2 and 100.
+   and smooths it: `P = (P_previous + P_new) / 2`.
+2. **Scales**: `f(P) = 0` below 50%, `1` above 90%, linear in between: `f = (P − 50) / 40`.
+3. **Chooses the ceiling `C`**: 100 (`-ackmax:N`), or with `+net` the network ceiling above.
+4. **Target**: `T = 2 + (C − 2) × f(P)`. Examples: `P ≤ 50% → 2`, `60% → 26`, `70% → 51`,
+   `80% → 75`, `≥ 90% → 100`.
+5. **Safety**: `T` at most doubles per window (decreases apply at once); with `+net`, a loss
+   caps `T` at half its current value.
 
-**Step 4: target** `T_target = 2 + (C − 2) × f(P)`.
+The new values go to the client in an `ACK_FREQUENCY` frame when they change.
+Every decision is logged with its inputs (`ack_decisions.csv`). Environment variables
+`MCN_ACK_CPU_LO` (50), `MCN_ACK_CPU_HI` (90), `MCN_ACK_MAX` (100) and `MCN_ACK_PER_CWND` (4)
+tune it. Design rationale: [docs/design.md](docs/design.md).
 
-**Step 5: safety rules**:
-- **CPU + network only:** if a congestion event (loss) happened in the window,
-  `T_target ≤ max(T_current / 2, 2)`.
-- `T` may at most **double** per window (gradual increase); decreases apply at once.
+### How ACK cost is measured
 
-The new `T` is sent to the client in an `ACK_FREQUENCY` frame when it changes.
+perf needs root on the server, so msquic itself measures (nanosecond clock) and prints one
+`[mcn-stats]` line per connection (with `-acklog:1`):
 
-**Worked example** (CPU + network): the server is busy (`P = 80%`, so
-`f = (80 − 50) / 40 = 0.75`), the congestion window is 600 packets, smoothed RTT 12 ms,
-minimum RTT 4 ms (3× and 8 ms above it, so queueing). Ceiling: `600 / 4 = 150`, halved
-for queueing to `75`, within `[2, 100]`, so `C = 75`. Target: `2 + 73 × 0.75 = 56`. If
-the current `T` is 20, the increase is limited to `40`. If a loss had occurred in the window,
-`T` would instead be `min(56, 20 / 2) = 10`. With CPU only, the same `P` gives
-`2 + 98 × 0.75 = 75`, limited to `40` by the doubling rule.
+| Metric | Measured around | Meaning in a download |
+|---|---|---|
+| `server_recv_us_per_mb` | `QuicConnFlushRecv` on the server | The server receives almost only ACK packets: **time to decrypt and process ACKs** |
+| `server_ack_proc_us_per_mb` | `QuicLossDetectionProcessAckFrame` | Only the ACK-frame processing part of the above |
+| `client_send_us_per_mb` | `QuicSendFlush` on the client | The client sends almost only ACK packets: **time to build, encrypt and send ACKs** |
 
-With an idle server (`P ≤ 50%`), `T = 2` in both modes: the RFC behaviour.
+Kernel time in the UDP system calls is not included (it runs in msquic's datapath threads).
 
-Every decision is logged with `-acklog:1` and ends up in `ack_decisions.csv`, with
-its inputs: `cpu_pct` (`P`), `thread_cpu_pct`, `sys_cpu_pct`, `scale_pct` (`f`),
-`ceiling` (`C`), `cwnd_pkts`, `t_net` (network ceiling), `srtt_us`, `min_rtt_us`,
-`queueing`, `loss`, and `old`/`new` (`T`).
+## Results
 
-Tuning (environment variables on the server): `MCN_ACK_CPU_LO` (50), `MCN_ACK_CPU_HI`
-(90), `MCN_ACK_MAX` (100, same as `-ackmax`), `MCN_ACK_PER_CWND` (4).
-Code: `QuicConnMcnAckAdaptive` in [msquic/src/core/connection.c](msquic/src/core/connection.c).
+Main run: [`results/20261112-012708`](results/20261112-012708) (Wi-Fi, ~600 Mbit/s, 264 downloads
+of 20 MB–1 GB, 11 policy variants, idle server and fully loaded server). Supplementary:
+[`results/20261112-010521`](results/20261112-010521) (wired 100 Mbit/s, idle server, 55 downloads).
+Details and discussion: [docs/report.md](docs/report.md).
 
-**msquic receiver detail:** reaching `T` only *marks* an ACK as needed; msquic sends it
-after processing the whole receive batch. So the actual ratio is about
-`max(T, packets per receive batch)`, and small `T` values change little at high packet rates.
+1. **`adaptive` does what it is designed to do.** Idle server: `T = 2` (RFC behaviour, full
+   feedback). Fully loaded server: `T` ≈ 91, **51% fewer ACKs** and **48% less client
+   ACK-generation time** than `fixed:2`, with **no download-time penalty** (0.98× `fixed:2`).
+2. **When the receiver ACKs often, a high threshold removes most ACK cost.** On the 100 Mbit/s link
+   (one ACK per 2 packets), `fixed:100` cut server ACK-handling time by 82% and client
+   ACK-generation time by 95%.
+3. **`+phase` removes the cost of a high threshold for small transfers.** `fixed:100` made 20 MB
+   downloads ~35% slower (0.37 s vs 0.27 s); `fixed:100+phase` took 0.26–0.27 s while keeping
+   80–93% of the ACK savings.
+4. **At high rates msquic already batches ACKs** (~56 data packets per ACK even at `T = 2`), so the
+   server's remaining cost is per acknowledged packet and changed by at most −12%.
+5. **LiteQUIC's rule misreads Wi-Fi:** it raised `T` to ~59 on an *idle* server and sent ~70
+   `ACK_FREQUENCY` frames per second.
+6. **`+reorder` had nothing to act on** (no reordered packet in 316 downloads); `+delay` and `+net`
+   make `adaptive` more conservative (more ACKs) with no measurable download-time change here.
+7. **CPU frequency matters for measurement:** the server ran at 822 MHz idle vs 2715 MHz loaded,
+   which changes per-MB costs by ~45%; compare costs only within a load level.
 
-## Reproducing the ACK policy evaluation
+| ![Threshold over time](results/20261112-012708/figures/threshold_timeline.png) | ![ACKs per MB](results/20261112-012708/figures/acks_per_mb.png) |
+|---|---|
+| ![Client ACK cost](results/20261112-012708/figures/client_ack_cost.png) | ![Download time](results/20261112-012708/figures/download_time.png) |
 
-The evaluation uses two Linux machines: a **server** that serves files and a
-**client** that downloads them. Everything is started from the client, which
-controls the server over SSH.
+## Repository layout
 
-### 1. One-time setup
+| Path | Contents |
+|---|---|
+| `msquic/` | Vendored [microsoft/msquic](https://github.com/microsoft/msquic) `v2.6.3` (commit `16ca4d8`) with our changes, marked `MCN26` |
+| `apps/quicfile/` | Download client/server used in all experiments |
+| `scripts/setup.sh` | Builds msquic, `secnetperf` and `quicfile` |
+| `scripts/make-testdata.sh` | Creates the test files (20 MB, 100 MB, 500 MB, 1 GB, random data) and a TLS certificate |
+| `scripts/cpu-load.sh` | CPU load: `N` or `Kx` (K per core) busy-loop processes |
+| `scripts/cpumon.py` | Logs machine and `quicfile` CPU every 200 ms |
+| `experiments/run_quicfile.sh` | The evaluation runner (run on the client) |
+| `analysis/parse_results.py` | Turns a run into `runs.csv`, `ack_decisions.csv`, `summary.csv` |
+| `analysis/plot.py` | Draws the figures of a run into `results/<run>/figures/` |
+| `analysis/summarize.py` | Prints the report's tables (markdown) for a run |
+| `results/` | One folder per evaluation run; index in [results/README.md](results/README.md) |
+| `docs/` | [Report](docs/report.md), [design notes](docs/design.md), [BibTeX](docs/refs.bib) |
+| `proposal/` | Course proposal |
 
-On **both** machines, at the same commit:
+## Reproducing the results
+
+You need two Linux machines (we used Ubuntu 24.04): a **server** that serves the files and a
+**client** that downloads them. Everything is started on the client, which controls the
+server over SSH.
+
+### 1. Requirements
+
+- CMake ≥ 3.16, GCC, Ninja, `libssl-dev`, `libnuma-dev`, `openssl`, Python 3.
+  `INSTALL_DEPS=1 scripts/setup.sh` installs them with apt (needs sudo).
+- `matplotlib` on the client for the figures (`pip install matplotlib`).
+- Disk: about 250 MB for sources and build; 1.6 GB for the test files on the server.
+- No root access is needed on either machine.
+
+### 2. Set up both machines (same commit on both)
 
 ```bash
-git clone <repo-url> ~/Documents/mcn26 && cd ~/Documents/mcn26
-scripts/setup.sh
+git clone https://github.com/kunalumaji/mcn26.git ~/Documents/mcn26
+cd ~/Documents/mcn26
+scripts/setup.sh            # builds into build/msquic/bin/Release/ (also fetches quictls)
 ```
 
-On the **server**, create the test files (20MB, 100MB, 500MB, 1GB of random
-data) and a self-signed TLS certificate in `data/` (gitignored):
+On the **server** only, create the test files and certificate (in `data/`, not in git):
 
 ```bash
 scripts/make-testdata.sh
 ```
 
-On the **client**, make sure `ssh <user>@<server>` works without a password (SSH key)
-and that UDP ports 4433–4440 on the server are reachable.
+On the **client**: `ssh <user>@<server>` must work without a password (SSH key), and UDP
+ports 4433–4445 on the server must be reachable.
 
-### 2. Run the evaluation (on the client)
+If the server cannot reach GitHub, push the commit to it from the client instead:
 
 ```bash
-SERVER=kunal@10.21.232.3 experiments/run_quicfile.sh
+git push ssh://<user>@<server>/home/<user>/Documents/mcn26 main:refs/heads/from-client
+ssh <user>@<server> 'cd ~/Documents/mcn26 && git merge --ff-only from-client && scripts/setup.sh'
 ```
 
-With the defaults, this downloads each of the 4 files with each of the 6 policies
-(`default fixed:2 fixed:10 fixed:100 litequic adaptive adaptive+net`), 3 times, at
-2 server CPU load levels (none, and 2 busy-loop processes per core): 168 downloads.
-Over Wi-Fi this takes about an hour. Everything is configurable through environment variables:
+### 3. Run the evaluation (on the client)
+
+The exact command for the main results (`results/20261112-012708`):
+
+```bash
+SERVER=<user>@<server-ip> FILES="20MB.bin 100MB.bin 500MB.bin 1GB.bin" REPS=3 SERVER_LOADS="0 2x" \
+    experiments/run_quicfile.sh
+python3 analysis/plot.py results/<timestamp>        # figures into results/<timestamp>/figures/
+python3 analysis/summarize.py results/<timestamp>   # the report's tables (markdown)
+```
+
+It downloads every file with all 11 policy variants, 3 times, with no server load and with 2
+busy-loop processes per server core: 264 downloads, 33 minutes over ~600 Mbit/s Wi-Fi (the runtime
+scales with link speed). At the end it prints a summary table and writes `results/<timestamp>/`.
+A 1-minute check of the pipeline:
+
+```bash
+FILES=20MB.bin REPS=1 POLICIES="fixed:2 fixed:100 adaptive" experiments/run_quicfile.sh
+```
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `SERVER` | `kunal@10.21.232.3` | SSH target of the server |
-| `SERVER_ROOT` | `Documents/mcn26` | Repo path on the server (relative to its home) |
-| `FILES` | `20MB.bin 100MB.bin 500MB.bin 1GB.bin` | Files to download |
-| `POLICIES` | `default fixed:2 fixed:10 fixed:100 litequic adaptive adaptive+net` | ACK policies: `default`, `fixed:N`, `litequic`, `adaptive` (CPU only), `adaptive+net` (CPU + network) |
+| `SERVER_IP` | host part of `SERVER` | Address the client downloads from |
+| `SERVER_ROOT` | `Documents/mcn26` | Repo path on the server, relative to its home |
+| `FILES` | `20MB.bin 100MB.bin 500MB.bin 1GB.bin` | Files to download (from the server's `data/files/`) |
+| `POLICIES` | the 11 specs of the final run | `default`, `fixed:N`, `litequic`, `adaptive`, each optionally `+net`, `+phase`, `+reorder`, `+delay` |
 | `SERVER_LOADS` | `0 2x` | Server CPU load levels: `0` none, `N` busy loops, `Kx` K per core |
-| `CLIENT_LOAD` | `0` | CPU load on the client during all runs (same format) |
+| `CLIENT_LOAD` | `0` | CPU load on the client during all runs |
 | `REPS` | `3` | Repetitions per (load, file, policy) |
 | `CC` | `cubic` | Congestion control: `cubic` or `bbr` |
 | `ALLOW_DIRTY` | unset | `1` skips the check that both machines are on the same clean commit |
 
-A quick check of the whole pipeline (about 1 minute):
+What the runner does:
+- **Refuses to start** unless client and server are on the same commit with no uncommitted
+  changes, so every result comes from identical code (`meta.txt` records both commits).
+- Starts **one server per policy**, each on its own port, and **interleaves** downloads across
+  policies, rotating the order every repetition, so slow changes in the network affect all
+  policies equally.
+- Logs CPU on both machines every 200 ms (`scripts/cpumon.py`).
+- If a download fails, saves the client's output in `failures.log` and restarts that policy's
+  server (`restarts.log`).
 
-```bash
-FILES=20MB.bin REPS=1 SERVER_LOADS="0 2x" experiments/run_quicfile.sh
-```
-
-How the runner works:
-- It refuses to start unless client and server are on the **same commit** with no
-  uncommitted changes, so results always come from identical code.
-- It starts one server per policy on its own port (4433, 4434, …) and interleaves
-  downloads across policies, rotating the order every repetition, so changes in
-  network conditions over time affect all policies equally.
-- Server CPU load comes from `scripts/cpu-load.sh` (busy loops at normal priority),
-  which compete with the QUIC server for CPU.
-- `scripts/cpumon.py` logs CPU on both machines every 200 ms.
-
-### 3. Outputs
-
-Each run writes `results/<timestamp>/`:
+### 4. Outputs (`results/<timestamp>/`)
 
 | File | Contents |
 |---|---|
 | `meta.txt` | Settings, commits, hosts, kernels |
-| `restarts.log` / `failures.log` | Only if downloads failed: which servers were restarted, and the client's error output |
-| `client.log` / `server.log` | Raw `RESULT` / `SERVER` lines and the policies' decision log |
-| `runs.csv` | **One row per download**: `download_s` (connection start to last byte: the time to compare policies), `handshake_ms`, `ttfb_ms` (request to first byte), `transfer_ms` (request to last byte), goodput, client and server process CPU (total and per MB), whole-machine CPU % on both sides, packets, ACKs, data packets per ACK, losses, RTT, mean ACK threshold |
-| `ack_decisions.csv` | Every threshold decision over time (`tag`, `t_ms`, `old`, `new`, and the policy's inputs, e.g. `cpu_pct`, `thread_cpu_pct`, `sys_cpu_pct`, `cwnd_pkts`, `t_net`, `loss` for `adaptive`) |
-| `summary.csv` | Medians per (server load, policy, file); also printed at the end of the run |
-| `cpu_client.csv` / `cpu_server.csv` | CPU time series: `ts`, `sys_cpu_pct` (whole machine), `proc_cpu_pct` (`quicfile`, % of one core), `loadavg1` |
+| `runs.csv` | **One row per download**: `download_s` (connection start to last byte), `goodput_mbps`, `data_pkts_per_ack`, `server_recv_ack_frames`, `server_recv_us_per_mb`, `server_ack_proc_us_per_mb`, `client_send_us_per_mb`, process CPU per MB, machine CPU %, losses, reordered packets, RTT, mean threshold `T` |
+| `summary.csv` | Medians per (server load, policy, file) |
+| `ack_decisions.csv` | Every threshold decision over time with the policy's inputs |
+| `cpu_client.csv`, `cpu_server.csv` | CPU time series of both machines |
+| `client.log`, `server.log` | Raw output (`RESULT`, `SERVER`, `[mcn]`, `[mcn-stats]` lines) |
+| `figures/` | Plots from `analysis/plot.py` |
 
-`runs.csv` and `ack_decisions.csv` share the `tag` column
-(`L<load>_<policy>_<file>_r<rep>`). The `start_ts`/`end_ts` columns of `runs.csv` (Unix time
-on the client) locate each download in the CPU time series.
-`analysis/parse_results.py results/<timestamp>` regenerates the CSVs.
-
-### Running a single download by hand
+### 5. A single download by hand
 
 ```bash
 # server
 build/msquic/bin/Release/quicfile server -dir:data/files -cert:data/cert.pem -key:data/key.pem \
-    -policy:adaptive -acklog:1
+    -policy:adaptive -ackphase:1 -ackreorder:3 -ackdelay:1 -acklog:1
 # client
-build/msquic/bin/Release/quicfile client -target:<server-ip> -file:100MB.bin
+build/msquic/bin/Release/quicfile client -target:<server-ip> -file:100MB.bin -acklog:1
 ```
 
-`-policy:default|fixed|litequic|adaptive`, `-threshold:N` (for `fixed`), `-acknet:1` and
-`-ackmax:N` (for `adaptive`), `-cc:cubic|bbr`,
-`-port:N`, `-out:<path>` (client: save the file; by default it is discarded). When
-starting the server over SSH, use `setsid -f ... < /dev/null`: a server started with
-`nohup`/`timeout` is killed when the SSH session closes.
+Options: `-policy:default|fixed|litequic|adaptive`, `-threshold:N` (fixed), `-acknet:1`,
+`-ackmax:N`, `-ackphase:1`, `-ackreorder:N`, `-ackdelay:1`, `-cc:cubic|bbr`, `-port:N`,
+`-out:<path>` (client: save the file), `-tag:<id>`. The client prints a `RESULT` line, the server
+a `SERVER` line per connection; `-acklog:1` adds `[mcn]` decisions and `[mcn-stats]`.
 
-## Team
+### Troubleshooting
 
-- Kunal Umaji
-- Kaveenraj G
-- Aravindh Sriram Kumar A G
+- **Server started over SSH dies when the session ends**: start it with
+  `setsid -f ... < /dev/null` (the runner does). `nohup`/`timeout` do not survive.
+- **Link speed**: check `ethtool <iface>`; our wired link negotiated only 100 Mbit/s although both
+  ends support 1 Gbit/s (likely the cable). Results from different link speeds are not comparable.
+- **Downloads stall under heavy load** (seen a few times): the runner restarts the server; the
+  client's output is in `failures.log`.
