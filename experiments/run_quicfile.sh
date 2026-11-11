@@ -5,9 +5,14 @@
 #
 # Environment (defaults in brackets):
 #   FILES          files in data/files on the server  [20MB.bin 100MB.bin 500MB.bin 1GB.bin]
-#   POLICIES       policy specs: default, fixed:N, litequic, adaptive (CPU only),
-#                  adaptive+net (CPU + network)
-#                  [default fixed:2 fixed:10 fixed:100 litequic adaptive adaptive+net]
+#   POLICIES       policy specs: <base>[:N][+modifier...]
+#                  base: default | fixed:N | litequic | adaptive (CPU only)
+#                  modifiers: +net (adaptive: network ceiling), +phase (slow start /
+#                  recovery aware), +reorder (reordering threshold 3), +delay
+#                  (max ACK delay SRTT/4); e.g. adaptive+phase+reorder+delay
+#                  [default fixed:2 fixed:100 fixed:100+phase litequic adaptive adaptive+phase
+#                   adaptive+reorder adaptive+delay adaptive+phase+reorder+delay
+#                   adaptive+net+phase+reorder+delay]
 #   SERVER_LOADS   server CPU load levels for scripts/cpu-load.sh (N or Kx; 0 = none)  [0 2x]
 #   CLIENT_LOAD    client CPU load during all runs (same format)  [0]
 #   REPS           repetitions per (load, file, policy)  [3]
@@ -24,7 +29,7 @@ SERVER="${SERVER:-kunal@10.21.232.3}"
 SERVER_IP="${SERVER_IP:-${SERVER#*@}}"
 SERVER_ROOT="${SERVER_ROOT:-Documents/mcn26}"
 FILES="${FILES:-20MB.bin 100MB.bin 500MB.bin 1GB.bin}"
-POLICIES="${POLICIES:-default fixed:2 fixed:10 fixed:100 litequic adaptive adaptive+net}"
+POLICIES="${POLICIES:-default fixed:2 fixed:100 fixed:100+phase litequic adaptive adaptive+phase adaptive+reorder adaptive+delay adaptive+phase+reorder+delay adaptive+net+phase+reorder+delay}"
 SERVER_LOADS="${SERVER_LOADS:-0 2x}"
 CLIENT_LOAD="${CLIENT_LOAD:-0}"
 REPS="${REPS:-3}"
@@ -80,18 +85,36 @@ python3 "$ROOT/scripts/cpumon.py" --out "$OUT/cpu_client.csv" & LOCAL_PIDS+=($!)
 # One server per policy, each on its own port, so runs can be interleaved.
 # Logs are appended so a restarted server keeps its earlier output.
 declare -A PORT
-# Spec -> quicfile options: fixed:N -> -policy:fixed -threshold:N,
-# adaptive+net -> -policy:adaptive -acknet:1.
-start_server() {
-    local spec="$1" port="${PORT[$1]}" policy="${1%%:*}" extra=""
-    [[ "$spec" == *:* ]] && extra="-threshold:${spec#*:}"
-    if [[ "$policy" == "adaptive+net" ]]; then
-        policy=adaptive
-        extra="-acknet:1"
+# Policy spec -> quicfile options: <base>[:N][+modifier...], e.g.
+# fixed:100+phase -> -policy:fixed -threshold:100 -ackphase:1.
+spec_options() {
+    local spec="$1" base="${1%%+*}" opts modifier
+    opts="-policy:${base%%:*}"
+    [[ "$base" == *:* ]] && opts+=" -threshold:${base#*:}"
+    if [[ "$spec" == *+* ]]; then
+        local -a modifiers
+        IFS=+ read -r -a modifiers <<< "${spec#*+}"
+        for modifier in "${modifiers[@]}"; do
+            case "$modifier" in
+                net) opts+=" -acknet:1" ;;
+                phase) opts+=" -ackphase:1" ;;
+                reorder) opts+=" -ackreorder:3" ;;
+                delay) opts+=" -ackdelay:1" ;;
+                *) echo "Unknown modifier '+$modifier' in policy '$spec'" >&2; return 1 ;;
+            esac
+        done
     fi
+    echo "$opts"
+}
+for spec in $POLICIES; do
+    spec_options "$spec" > /dev/null || exit 1
+done
+
+start_server() {
+    local spec="$1" port="${PORT[$1]}"
     remote "cd $SERVER_ROOT && setsid -f build/msquic/bin/Release/quicfile server \
         -dir:data/files -cert:data/cert.pem -key:data/key.pem -port:$port -cc:$CC \
-        -policy:$policy $extra -acklog:1 >> /tmp/mcn-qf-$port.log 2>&1 < /dev/null"
+        $(spec_options "$spec") -acklog:1 >> /tmp/mcn-qf-$port.log 2>&1 < /dev/null"
 }
 port=$BASE_PORT
 for spec in $POLICIES; do
@@ -120,9 +143,14 @@ for load in $SERVER_LOADS; do
                 tag="L${load}_${spec/:/-}_${file%.bin}_r${rep}"
                 start=$(date +%s.%N)
                 output=$(timeout 900 "$BIN/quicfile" client -target:"$SERVER_IP" \
-                    -port:"${PORT[$spec]}" -file:"$file" -tag:"$tag" -cc:"$CC" 2>&1) || true
+                    -port:"${PORT[$spec]}" -file:"$file" -tag:"$tag" -cc:"$CC" \
+                    -acklog:1 2>&1) || true
                 end=$(date +%s.%N)
                 line=$(grep '^RESULT' <<< "$output" || echo "RESULT tag=$tag file=$file FAILED=1")
+                # Client-side ACK-cost statistics ([mcn-stats]), keys prefixed with "cm_".
+                cstats=$(grep -m1 '^\[mcn-stats\]' <<< "$output" \
+                    | sed -E 's/^\[mcn-stats\] conn=[^ ]+ //; s/(^| )([a-z_]+)=/\1cm_\2=/g' || true)
+                line="$line $cstats"
                 if [[ "$line" == *FAILED* ]]; then
                     # Keep the client's own messages (e.g. shutdown status) for diagnosis.
                     { echo "== $(date -Is) tag=$tag"; echo "$output"; } >> "$OUT/failures.log"

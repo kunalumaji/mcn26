@@ -11,8 +11,12 @@
  *   -threshold:<N>                   ACK threshold for -policy:fixed (default 2)
  *   -acknet:0|1                      adaptive: also use network conditions (default 0)
  *   -ackmax:<N>                      adaptive: highest threshold (default 100)
+ *   -ackphase:1                      modifier: slow start T <= cwnd/4, recovery T = 2
+ *   -ackreorder:<N>                  modifier: request reordering threshold N (default 1)
+ *   -ackdelay:1                      modifier: request max ACK delay SRTT/4 (1-25 ms)
  *   -cc:cubic|bbr                    congestion control (default cubic)
- *   -acklog:1                        print ACK policy decisions to stderr
+ *   -acklog:1                        print ACK policy decisions and per-connection
+ *                                    ACK-cost statistics ([mcn-stats]) to stderr
  *
  * Protocol: the client opens one bidirectional stream and sends "<file> <tag>"
  * with FIN; the server replies with the file contents and FIN.
@@ -142,6 +146,9 @@ ApplyAckPolicy(int argc, char** argv)
         { "threshold", "MCN_ACK_THRESHOLD" },
         { "acknet", "MCN_ACK_NET" },
         { "ackmax", "MCN_ACK_MAX" },
+        { "ackphase", "MCN_ACK_PHASE" },
+        { "ackreorder", "MCN_ACK_REORDER" },
+        { "ackdelay", "MCN_ACK_DELAY" },
         { "acklog", "MCN_ACK_LOG" },
     };
     for (size_t i = 0; i < sizeof(Passthrough) / sizeof(Passthrough[0]); ++i) {
@@ -181,14 +188,16 @@ PrintStats(const char* Prefix, HQUIC Connection)
     }
     printf(
         "%s_sent_pkts=%llu %s_recv_pkts=%llu %s_recv_ack_frames=%llu "
-        "%s_lost_pkts=%llu %s_congestion_events=%u %s_rtt_us=%u %s_min_rtt_us=%u",
+        "%s_lost_pkts=%llu %s_congestion_events=%u %s_rtt_us=%u %s_min_rtt_us=%u "
+        "%s_reordered_pkts=%llu",
         Prefix, (unsigned long long)Stats.SendTotalPackets,
         Prefix, (unsigned long long)Stats.RecvTotalPackets,
         Prefix, (unsigned long long)Stats.RecvValidAckFrames,
         Prefix, (unsigned long long)Stats.SendSuspectedLostPackets,
         Prefix, Stats.SendCongestionCount,
         Prefix, Stats.Rtt,
-        Prefix, Stats.MinRtt);
+        Prefix, Stats.MinRtt,
+        Prefix, (unsigned long long)Stats.RecvReorderedPackets);
 }
 
 //
@@ -667,7 +676,7 @@ main(int argc, char** argv)
             "usage: %s server -dir:<path> -cert:<file> -key:<file> [-port:N] [options]\n"
             "       %s client -target:<ip> -file:<name> [-port:N] [-out:<path>] [-tag:<id>] [options]\n"
             "options: -policy:default|fixed|litequic|adaptive -threshold:N -acknet:0|1 -ackmax:N\n"
-            "         -cc:cubic|bbr -acklog:1\n",
+            "         -ackphase:1 -ackreorder:N -ackdelay:1 -cc:cubic|bbr -acklog:1\n",
             argv[0], argv[0]);
         return 1;
     }
