@@ -1,0 +1,9 @@
+== 2026-11-12T01:32:16+05:30 tag=L0_adaptive+phase+reorder+delay_1GB_r1
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x599fa4c4de80 recv_ns=104570600 recv_flushes=2051 ack_proc_ns=895519 ack_proc_frames=526 send_ns=27231781 send_flushes=1899 sent_pkts=1901 recv_pkts=117834 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-12T01:46:03+05:30 tag=L2x_fixed-2_1GB_r1
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x5e16534a4e80 recv_ns=197492622 recv_flushes=4184 ack_proc_ns=1712776 ack_proc_frames=999 send_ns=52117394 send_flushes=3886 sent_pkts=3888 recv_pkts=236614 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-12T01:59:37+05:30 tag=L2x_adaptive+net+phase+reorder+delay_1GB_r3
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x60de35075e80 recv_ns=130240049 recv_flushes=2199 ack_proc_ns=985345 ack_proc_frames=549 send_ns=26441002 send_flushes=1553 sent_pkts=1555 recv_pkts=129314 reordered_pkts=0 ack_freq_updates=0
