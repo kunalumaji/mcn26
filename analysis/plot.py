@@ -179,39 +179,41 @@ def cost_vs_acks(rows, loads, path):
 
 
 def threshold_timeline(out, rows, path):
-    """Threshold over time for the adaptive policies in one 2x-load download of the largest file."""
+    """Threshold over time for the adaptive policies in one 2x-load download of the largest
+    file: one panel per policy (shared time axis), plus the CPU pressure driving adaptive."""
     decisions = list(csv.DictReader(open(out / "ack_decisions.csv")))
     files = sorted({r["file"] for r in rows}, key=file_mb)
     file = files[-1].replace(".bin", "")
     specs = [s for s in ["litequic", "adaptive", "adaptive+phase+reorder+delay",
                          "adaptive+net+phase+reorder+delay"]
-             if any(d["spec"] == s for d in decisions)]
+             if any(d["tag"] == f"L2x_{s}_{file}_r1" for d in decisions)]
     if not specs:
+        print("threshold_timeline: no 2x-load download in this run, skipped")
         return
-    fig, (top, bottom) = plt.subplots(2, 1, figsize=(9, 6.2), sharex=True,
-                                      gridspec_kw={"height_ratios": [2.2, 1]})
-    # Line style is a second encoding next to colour (slots 3-4 are below 3:1 contrast).
-    styles = ["-", (0, (6, 2)), (0, (1, 1.5)), (0, (6, 2, 1, 2))]
-    cpu_spec = None
-    for color, style, spec in zip(SLOTS, styles, specs):
+    fig, axes = plt.subplots(len(specs) + 1, 1, figsize=(9, 1.55 * (len(specs) + 1) + 1),
+                             sharex=True)
+    cpu_spec, cpu = None, []
+    for ax, spec in zip(axes, specs):
         tag = f"L2x_{spec}_{file}_r1"
         points = sorted((num(d["t_ms"]) / 1000, num(d["new"])) for d in decisions if d["tag"] == tag)
-        if not points:
-            continue
-        xs, ys = zip(*points)
-        top.step(xs, ys, where="post", color=color, linestyle=style, linewidth=2, label=spec)
-        cpu = sorted((num(d["t_ms"]) / 1000, num(d["cpu_pct"])) for d in decisions
-                     if d["tag"] == tag and num(d.get("cpu_pct")) is not None)
-        if cpu and cpu_spec is None:
-            cpu_spec = spec
-            bottom.plot(*zip(*cpu), color=color, linestyle=style, linewidth=2)
-    top.set_ylabel("ACK threshold T")
-    top.set_title(f"Threshold chosen over one {file} download under 2x server load", loc="left")
-    top.legend(frameon=False, loc="lower right", fontsize=9)
-    bottom.set_ylabel("CPU pressure P (%)")
-    bottom.set_xlabel("time since connection start (s)")
-    bottom.set_title(f"{cpu_spec}: smoothed CPU pressure P that drives T", loc="left", fontsize=10)
+        ax.step(*zip(*points), where="post", color=BASELINE if spec == "litequic" else OURS,
+                linewidth=1.2)
+        ax.set_ylim(0, 260)
+        ax.set_yticks([0, 100, 200])
+        ax.set_title(spec, loc="left", fontsize=10)
+        if cpu_spec is None:
+            cpu = sorted((num(d["t_ms"]) / 1000, num(d["cpu_pct"])) for d in decisions
+                         if d["tag"] == tag and num(d.get("cpu_pct")) is not None)
+            cpu_spec = spec if cpu else None
+    axes[len(specs) // 2].set_ylabel("ACK threshold T")
+    bottom = axes[-1]
+    if cpu:
+        bottom.plot(*zip(*cpu), color=OURS, linewidth=1.5)
     bottom.set_ylim(0, 105)
+    bottom.set_title(f"{cpu_spec}: smoothed CPU pressure P (%) that drives T", loc="left", fontsize=10)
+    bottom.set_xlabel("time since connection start (s)")
+    fig.suptitle(f"ACK threshold over one {file} download, server load 2x", x=0.01, ha="left",
+                 fontsize=12, fontweight="bold")
     fig.tight_layout()
     fig.savefig(path, dpi=150)
     plt.close(fig)
