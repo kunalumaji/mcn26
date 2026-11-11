@@ -5,9 +5,9 @@
 At high rates, QUIC's user-space ACK generation and processing take a large share
 of CPU. Lowering ACK frequency saves CPU but starves congestion control of
 feedback, which hurts throughput with shallow buffers and on lossy paths
-(see LiteQUIC in [related-work.md](related-work.md)).
+(see LiteQUIC; full write-up in [report.md](report.md)).
 
-## Candidate directions (not final)
+## Candidate directions (initial brainstorm)
 
 1. **Event-driven feedback.** ACK sparsely by default. The sender uses
    `IMMEDIATE_ACK` or short `ACK_FREQUENCY` bursts to request dense feedback only
@@ -38,8 +38,8 @@ selected per process with `quicfile -policy:...` (environment variable
 
 ### `adaptive`
 
-The full algorithm, with a worked example, is in the README section
-[How `adaptive` calculates the threshold](../README.md#how-adaptive-calculates-the-threshold).
+The full algorithm is in the README section
+[How `adaptive` calculates `T`](../README.md#how-adaptive-calculates-t).
 In short, every `max(SRTT, 20 ms)`:
 
 `T = 2 + (C − 2) · f(P)`, increases capped at 2× per window, where
@@ -65,6 +65,32 @@ Design rationale and history:
   LAN/loopback the minimum RTT is tens of microseconds, so the ratio alone is
   triggered by any jitter.
 
+## Modifiers: `+phase`, `+reorder`, `+delay`
+
+Chosen from a brainstorm of further signals (see "Deferred ideas" below) because each
+addresses an observed problem and maps onto an `ACK_FREQUENCY` field msquic's receiver
+already honours. They are applied in `QuicConnMcnAckSetThreshold` to every threshold the
+`fixed`, `litequic` and `adaptive` policies choose, so each can be switched on separately
+(ablation). All three fields are sent together in one `ACK_FREQUENCY` frame
+(`QuicConnMcnAckUpdatePeer`); `fixed` re-evaluates every `max(SRTT, 20 ms)` when `+phase` or
+`+delay` is on.
+
+| Modifier | Rule | Observation that motivated it |
+|---|---|---|
+| `+phase` (`MCN_ACK_PHASE`) | Cubic slow start (`cwnd < ssthresh`): `T ≤ max(2, cwnd_packets / 4)`; recovery: `T = 2` | `fixed:100` made 20 MB downloads ~33% slower on Wi-Fi: with `T` > packets in flight, the receiver waits 25 ms in every slow-start round. msquic starts with an unlimited `ssthresh` and HyStart off, so slow start can be long; a blunt `T = 2` would cancel the savings, hence the cwnd/4 cap |
+| `+reorder` (`MCN_ACK_REORDER=3`) | Request reordering threshold 3 (msquic sends 1) | Out-of-order arrivals bypass `T` and force an immediate ACK; the sender's loss detection needs 3 later packets acknowledged (`QUIC_PACKET_REORDER_THRESHOLD`, RFC 9002), so ACKs for smaller gaps carry no actionable signal (draft-ietf-quic-ack-frequency §9) |
+| `+delay` (`MCN_ACK_DELAY`) | Request max ACK delay `clamp(SRTT/4, max(1 ms, peer min_ack_delay), 25 ms)` | Custura et al.: scale the ACK delay with the RTT; a fixed 25 ms timer is far longer than a LAN RTT |
+
+## ACK-cost instrumentation
+
+Whole-process CPU (getrusage) could not show ACK savings: ACK work is a small part of
+it and it includes idle polling. perf needs root on the server. msquic therefore measures
+directly (`clock_gettime`, ns) per connection and prints `[mcn-stats]` at shutdown:
+time in `QuicConnFlushRecv` (receive path), in `QuicLossDetectionProcessAckFrame` (ACK
+frames) and in `QuicSendFlush` (send path, via a wrapper). In a download the server
+receives almost only ACK packets and the client sends almost only ACK packets, so these
+are the ACK costs on each side. Kernel time in UDP system calls is not included.
+
 **msquic receiver detail:** reaching `T` only *marks* an ACK as needed; the ACK is
 sent after the whole receive batch is processed. The effective ratio is therefore
 about `max(T, packets per receive batch)`, and small `T` values have no effect at
@@ -73,15 +99,20 @@ high packet rates.
 ## Baselines
 
 1. RFC 9000 behaviour: `fixed:2`
-2. Fixed thresholds: `fixed:10`, `fixed:100`
-3. msquic's built-in heuristic: `default` (see [msquic-notes.md](msquic-notes.md))
+2. Fixed threshold: `fixed:100` (LiteQUIC's largest tested value; `fixed:10` in earlier runs)
+3. msquic's built-in heuristic: `default`
 4. LiteQUIC's adaptive rule: `litequic`
-5. Our approach: `adaptive` (CPU only) and `adaptive` + `-acknet:1` (CPU + network)
+5. Ours: `adaptive`, its modifiers, and `adaptive+net`
 
-## Open questions
+## Deferred ideas (brainstorm, not implemented)
 
-- Receiver-side CPU: the receiver must ACK at least as often as `T`, so client CPU
-  cannot raise `T` without a signal back to the sender. Options: a hint frame, or
-  sending `T_net` as a ceiling and letting the receiver choose within it.
-- Event-driven feedback (`IMMEDIATE_ACK` at loss / slow start) on top of `adaptive`.
-- Testbed: the client is on Wi-Fi; final numbers need a wired link.
+| Idea | Why deferred |
+|---|---|
+| Client (receiver) CPU awareness | The receiver may only ACK *more* often than `T`; two-sided control needs a new CPU-hint frame |
+| Event-driven `IMMEDIATE_ACK` (loss, tail, cwnd round) | msquic can receive but not send `IMMEDIATE_ACK`; needs a frame encoder and send flag |
+| Flow-size awareness (small `T` for short transfers / last flight) | Mostly covered by `+phase` |
+| BBR-specific ceiling (BBR tolerates sparse ACKs) | Needs BBR runs |
+| Loss-rate (not only loss-event) scaling | Partly covered by `+net` |
+| Server-wide ACK budget across connections | Needs a multi-connection workload |
+| LiteQUIC's ACK merge | Lowers ACK cost, not frequency; would complete the LiteQUIC baseline |
+| Adaptive reordering threshold (draft §9) | Only worth it if reordering is common; measure first |
