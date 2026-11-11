@@ -1414,6 +1414,12 @@ QuicConnOnShutdownComplete(
     QuicSendUninitialize(&Connection->Send);
     QuicDatagramSendShutdown(&Connection->Datagram);
 
+    //
+    // MCN26: before SHUTDOWN_COMPLETE is indicated, so the line precedes the
+    // application's per-connection output.
+    //
+    QuicConnMcnAckPrintStats(Connection);
+
     if (Connection->State.ExternalOwner) {
 
         QUIC_CONNECTION_EVENT Event;
@@ -4654,7 +4660,9 @@ QuicConnRecvFrames(
         case QUIC_FRAME_ACK:
         case QUIC_FRAME_ACK_1: {
             BOOLEAN InvalidAckFrame;
-            if (!QuicLossDetectionProcessAckFrame(
+            uint64_t AckStartNs = QuicMcnNowNs(); // MCN26
+            BOOLEAN AckProcessed =
+                QuicLossDetectionProcessAckFrame(
                     &Connection->LossDetection,
                     Path,
                     Packet,
@@ -4663,7 +4671,10 @@ QuicConnRecvFrames(
                     PayloadLength,
                     Payload,
                     &Offset,
-                    &InvalidAckFrame)) {
+                    &InvalidAckFrame);
+            Connection->McnAck.AckProcNs += QuicMcnNowNs() - AckStartNs; // MCN26
+            Connection->McnAck.AckProcFrames++;
+            if (!AckProcessed) {
                 if (InvalidAckFrame) {
                     QuicTraceEvent(
                         ConnError,
@@ -6047,9 +6058,13 @@ QuicConnFlushRecv(
     CxPlatDispatchLockRelease(&Connection->ReceiveQueueLock);
 
     uint64_t AckFramesBefore = Connection->Stats.Recv.ValidAckFrames; // MCN26
+    uint64_t RecvStartNs = QuicMcnNowNs(); // MCN26
 
     QuicConnRecvDatagrams(
         Connection, ReceiveQueue, ReceiveQueueCount, ReceiveQueueByteCount, FALSE);
+
+    Connection->McnAck.RecvNs += QuicMcnNowNs() - RecvStartNs; // MCN26
+    Connection->McnAck.RecvFlushes++;
 
     QuicConnMcnAckOnRecvFlush( // MCN26
         Connection, Connection->Stats.Recv.ValidAckFrames - AckFramesBefore);
@@ -6441,6 +6456,9 @@ static uint32_t McnAckPerCwnd = 4;
 static uint32_t McnAckCpuLoPct = 50;
 static uint32_t McnAckCpuHiPct = 90;
 static BOOLEAN McnAckNet;
+static BOOLEAN McnAckPhase;
+static uint8_t McnAckReorder; // 0 = keep msquic's reordering threshold
+static BOOLEAN McnAckDelay;
 static BOOLEAN McnAckLog;
 static BOOLEAN McnAckInitialized;
 
@@ -6480,6 +6498,9 @@ QuicMcnAckInitialize(
     McnAckMax =
         (uint32_t)QuicMcnAckEnvInt("MCN_ACK_MAX", 100, MCN_ACK_MIN_THRESHOLD, UINT8_MAX);
     McnAckNet = QuicMcnAckEnvInt("MCN_ACK_NET", 0, 0, 1) == 1;
+    McnAckPhase = QuicMcnAckEnvInt("MCN_ACK_PHASE", 0, 0, 1) == 1;
+    McnAckReorder = (uint8_t)QuicMcnAckEnvInt("MCN_ACK_REORDER", 0, 0, UINT8_MAX);
+    McnAckDelay = QuicMcnAckEnvInt("MCN_ACK_DELAY", 0, 0, 1) == 1;
     McnAckPerCwnd = (uint32_t)QuicMcnAckEnvInt("MCN_ACK_PER_CWND", 4, 1, 64);
     McnAckCpuLoPct = (uint32_t)QuicMcnAckEnvInt("MCN_ACK_CPU_LO", 50, 0, 99);
     McnAckCpuHiPct =
@@ -6502,8 +6523,57 @@ QuicMcnAckPolicy(
 }
 
 //
-// Sets the peer's threshold. With MCN_ACK_LOG=1, every decision is printed as
-// one key=value line (Details holds the policy-specific inputs).
+// Congestion phase for MCN_ACK_PHASE (Cubic only): "ss" slow start,
+// "rec" loss recovery, "ca" congestion avoidance, "-" other algorithms.
+//
+static
+const char*
+QuicConnMcnAckPhase(
+    _In_ const QUIC_CONNECTION* Connection
+    )
+{
+    if (Connection->Settings.CongestionControlAlgorithm != QUIC_CONGESTION_CONTROL_ALGORITHM_CUBIC) {
+        return "-";
+    }
+    const QUIC_CONGESTION_CONTROL_CUBIC* Cubic = &Connection->CongestionControl.Cubic;
+    if (Cubic->IsInRecovery) {
+        return "rec";
+    }
+    return Cubic->CongestionWindow < Cubic->SlowStartThreshold ? "ss" : "ca";
+}
+
+//
+// Sends the peer a new ACK_FREQUENCY (threshold, reordering threshold,
+// requested max ACK delay) if any of them changed. Same pattern as
+// QuicConnUpdatePeerPacketTolerance.
+//
+static
+void
+QuicConnMcnAckUpdatePeer(
+    _In_ QUIC_CONNECTION* Connection,
+    _In_ uint8_t Threshold,
+    _In_ uint8_t Reorder,
+    _In_ uint64_t MaxAckDelayUs
+    )
+{
+    if (!(Connection->PeerTransportParams.Flags & QUIC_TP_FLAG_MIN_ACK_DELAY)) {
+        return;
+    }
+    if (Connection->PeerPacketTolerance != Threshold ||
+        Connection->PeerReorderingThreshold != Reorder ||
+        Connection->McnAck.PeerMaxAckDelayUs != MaxAckDelayUs) {
+        Connection->SendAckFreqSeqNum++;
+        Connection->PeerPacketTolerance = Threshold;
+        Connection->PeerReorderingThreshold = Reorder;
+        Connection->McnAck.PeerMaxAckDelayUs = MaxAckDelayUs;
+        QuicSendSetSendFlag(&Connection->Send, QUIC_CONN_SEND_FLAG_ACK_FREQUENCY);
+    }
+}
+
+//
+// Sets the peer's threshold chosen by a policy, after applying the modifiers
+// (MCN_ACK_PHASE, MCN_ACK_REORDER, MCN_ACK_DELAY). With MCN_ACK_LOG=1, every
+// decision is printed as one key=value line (Details holds the policy inputs).
 //
 static
 void
@@ -6513,17 +6583,81 @@ QuicConnMcnAckSetThreshold(
     _In_z_ const char* Details
     )
 {
+    uint8_t PolicyThreshold = Threshold;
+    const char* Phase = QuicConnMcnAckPhase(Connection);
+    if (McnAckPhase) {
+        if (strcmp(Phase, "rec") == 0) {
+            Threshold = MCN_ACK_MIN_THRESHOLD;
+        } else if (strcmp(Phase, "ss") == 0) {
+            //
+            // Keep at least 4 ACKs per slow-start round, so the receiver never
+            // waits for its delayed-ACK timer while cwnd is small.
+            //
+            uint32_t PayloadSize = QuicPathGetDatagramPayloadSize(&Connection->Paths[0]);
+            uint32_t CwndPackets =
+                Connection->CongestionControl.Cubic.CongestionWindow / PayloadSize;
+            uint32_t Cap = CXPLAT_MAX(MCN_ACK_MIN_THRESHOLD, CwndPackets / 4);
+            Threshold = (uint8_t)CXPLAT_MIN(Threshold, Cap);
+        }
+    }
+
+    uint8_t Reorder = McnAckReorder != 0 ? McnAckReorder : Connection->PeerReorderingThreshold;
+
+    uint64_t MaxAckDelayUs = 0;
+    if (McnAckDelay) {
+        //
+        // SRTT / 4, in whole ms (the receiver works in ms), within
+        // [max(1 ms, peer's min_ack_delay), 25 ms].
+        //
+        uint64_t Floor = CXPLAT_MAX(1000, Connection->PeerTransportParams.MinAckDelay);
+        uint64_t DelayMs = CXPLAT_MAX(1, Connection->Paths[0].SmoothedRtt / 4 / 1000);
+        MaxAckDelayUs = CXPLAT_MIN(25000, CXPLAT_MAX(Floor, DelayMs * 1000));
+    }
+
     if (McnAckLog) {
         fprintf(
             stderr,
-            "[mcn] conn=%p t_ms=%llu old=%u new=%u %s\n",
+            "[mcn] conn=%p t_ms=%llu old=%u new=%u policy_t=%u phase=%s reorder=%u "
+            "delay_us=%llu %s\n",
             (void*)Connection,
             (unsigned long long)US_TO_MS(CxPlatTimeUs64() - Connection->Stats.Timing.Start),
             Connection->PeerPacketTolerance,
             Threshold,
+            PolicyThreshold,
+            Phase,
+            Reorder,
+            (unsigned long long)MaxAckDelayUs,
             Details);
     }
-    QuicConnUpdatePeerPacketTolerance(Connection, Threshold);
+    QuicConnMcnAckUpdatePeer(Connection, Threshold, Reorder, MaxAckDelayUs);
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+QuicConnMcnAckPrintStats(
+    _In_ const QUIC_CONNECTION* Connection
+    )
+{
+    (void)QuicMcnAckPolicy(); // Ensures the configuration (MCN_ACK_LOG) is read.
+    if (!McnAckLog) {
+        return;
+    }
+    fprintf(
+        stderr,
+        "[mcn-stats] conn=%p recv_ns=%llu recv_flushes=%llu ack_proc_ns=%llu "
+        "ack_proc_frames=%llu send_ns=%llu send_flushes=%llu sent_pkts=%llu "
+        "recv_pkts=%llu reordered_pkts=%llu ack_freq_updates=%llu\n",
+        (void*)Connection,
+        (unsigned long long)Connection->McnAck.RecvNs,
+        (unsigned long long)Connection->McnAck.RecvFlushes,
+        (unsigned long long)Connection->McnAck.AckProcNs,
+        (unsigned long long)Connection->McnAck.AckProcFrames,
+        (unsigned long long)Connection->McnAck.SendNs,
+        (unsigned long long)Connection->McnAck.SendFlushes,
+        (unsigned long long)Connection->Stats.Send.TotalPackets,
+        (unsigned long long)Connection->Stats.Recv.TotalPackets,
+        (unsigned long long)Connection->Stats.Recv.ReorderedPackets,
+        (unsigned long long)Connection->SendAckFreqSeqNum);
 }
 
 //
@@ -6616,6 +6750,7 @@ QuicConnMcnAckOnHandshakeConfirmed(
 {
     switch (QuicMcnAckPolicy()) {
     case MCN_ACK_POLICY_FIXED:
+        Connection->McnAck.WindowStartUs = CxPlatTimeUs64();
         QuicConnMcnAckSetThreshold(Connection, McnAckFixedThreshold, "policy=fixed");
         break;
     case MCN_ACK_POLICY_LITEQUIC:
@@ -6801,6 +6936,20 @@ QuicConnMcnAckOnRecvFlush(
     }
 
     switch (QuicMcnAckPolicy()) {
+    case MCN_ACK_POLICY_FIXED:
+        //
+        // The phase and delay modifiers depend on cwnd and SRTT, so re-apply
+        // the fixed threshold once per max(SRTT, 20 ms) when either is on.
+        //
+        if (McnAckPhase || McnAckDelay) {
+            uint64_t Now = CxPlatTimeUs64();
+            if (Now - Connection->McnAck.WindowStartUs >=
+                CXPLAT_MAX(Connection->Paths[0].SmoothedRtt, MCN_ACK_ADAPTIVE_MIN_WINDOW_US)) {
+                Connection->McnAck.WindowStartUs = Now;
+                QuicConnMcnAckSetThreshold(Connection, McnAckFixedThreshold, "policy=fixed");
+            }
+        }
+        break;
     case MCN_ACK_POLICY_LITEQUIC:
         QuicConnMcnAckLiteQuic(Connection, AckFrames);
         break;

@@ -520,6 +520,21 @@ typedef struct QUIC_CONNECTION {
         uint64_t SysTotal;
         uint32_t PressurePct;   // Smoothed, 0-100.
         uint32_t CongestionCount;
+        //
+        // Requested max ACK delay sent in ACK_FREQUENCY (0 = msquic default).
+        //
+        uint64_t PeerMaxAckDelayUs;
+        //
+        // ACK-cost instrumentation (ns, CLOCK_MONOTONIC), printed at shutdown
+        // with MCN_ACK_LOG=1. For a download the server receives almost only
+        // ACK packets and the client sends almost only ACK packets.
+        //
+        uint64_t RecvNs;        // QuicConnFlushRecv: decrypt + process received packets
+        uint64_t RecvFlushes;
+        uint64_t AckProcNs;     // QuicLossDetectionProcessAckFrame only
+        uint64_t AckProcFrames;
+        uint64_t SendNs;        // QuicSendFlush: build + encrypt + send
+        uint64_t SendFlushes;
     } McnAck;
 
     //
@@ -1727,7 +1742,13 @@ QuicConnUpdatePeerPacketTolerance(
 //   MCN_ACK_CPU_HI    = %   adaptive: CPU pressure for the full ceiling (default 90)
 //   MCN_ACK_NET       = 1   adaptive: also use network conditions (default 0, CPU only)
 //   MCN_ACK_PER_CWND  = N   adaptive+net: minimum ACKs per congestion window (default 4)
-//   MCN_ACK_LOG       = 1   print policy decisions to stderr
+// Modifiers, applied to every threshold the fixed/litequic/adaptive policies set:
+//   MCN_ACK_PHASE     = 1   Cubic slow start: T <= max(2, cwnd_packets / 4);
+//                           loss recovery: T = 2
+//   MCN_ACK_REORDER   = N   request reordering threshold N (msquic default 1)
+//   MCN_ACK_DELAY     = 1   request max ACK delay = clamp(SRTT / 4, 1 ms, 25 ms)
+//   MCN_ACK_LOG       = 1   print policy decisions and per-connection ACK-cost
+//                           statistics ([mcn-stats]) to stderr
 //
 typedef enum MCN_ACK_POLICY {
     MCN_ACK_POLICY_DEFAULT,
@@ -1748,6 +1769,29 @@ _IRQL_requires_max_(PASSIVE_LEVEL)
 void
 QuicConnMcnAckOnHandshakeConfirmed(
     _In_ QUIC_CONNECTION* Connection
+    );
+
+//
+// MCN26: monotonic clock in nanoseconds, for the ACK-cost instrumentation.
+//
+QUIC_INLINE
+uint64_t
+QuicMcnNowNs(
+    void
+    )
+{
+    struct timespec Ts;
+    clock_gettime(CLOCK_MONOTONIC, &Ts);
+    return (uint64_t)Ts.tv_sec * 1000000000ull + (uint64_t)Ts.tv_nsec;
+}
+
+//
+// MCN26: prints the connection's [mcn-stats] line (MCN_ACK_LOG=1).
+//
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+QuicConnMcnAckPrintStats(
+    _In_ const QUIC_CONNECTION* Connection
     );
 
 //

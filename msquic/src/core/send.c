@@ -920,7 +920,10 @@ QuicSendWriteFrames(
             QUIC_ACK_FREQUENCY_EX Frame;
             Frame.SequenceNumber = Connection->SendAckFreqSeqNum;
             Frame.AckElicitingThreshold = Connection->PeerPacketTolerance;
-            Frame.RequestedMaxAckDelay = MS_TO_US(QuicConnGetAckDelay(Connection));
+            Frame.RequestedMaxAckDelay =
+                Connection->McnAck.PeerMaxAckDelayUs != 0 ? // MCN26: MCN_ACK_DELAY
+                    Connection->McnAck.PeerMaxAckDelayUs :
+                    MS_TO_US(QuicConnGetAckDelay(Connection));
             Frame.ReorderingThreshold = Connection->PeerReorderingThreshold;
 
             if (QuicAckFrequencyFrameEncode(
@@ -1207,8 +1210,9 @@ typedef enum QUIC_SEND_RESULT {
 #pragma warning(push)
 #pragma warning(disable:6001) // SAL is confused by the QuicConnAddRef followed by QuicConnRelease.
 _IRQL_requires_max_(PASSIVE_LEVEL)
+static
 BOOLEAN
-QuicSendFlush(
+QuicSendFlushInner( // MCN26: was QuicSendFlush; now wrapped for timing below
     _In_ QUIC_SEND* Send
     )
 {
@@ -1540,6 +1544,23 @@ QuicSendFlush(
     return Result != QUIC_SEND_INCOMPLETE;
 }
 #pragma warning(pop)
+
+//
+// MCN26: accumulates send-path time per connection (ACK-cost instrumentation).
+//
+_IRQL_requires_max_(PASSIVE_LEVEL)
+BOOLEAN
+QuicSendFlush(
+    _In_ QUIC_SEND* Send
+    )
+{
+    QUIC_CONNECTION* Connection = QuicSendGetConnection(Send);
+    uint64_t StartNs = QuicMcnNowNs();
+    BOOLEAN Result = QuicSendFlushInner(Send);
+    Connection->McnAck.SendNs += QuicMcnNowNs() - StartNs;
+    Connection->McnAck.SendFlushes++;
+    return Result;
+}
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void
