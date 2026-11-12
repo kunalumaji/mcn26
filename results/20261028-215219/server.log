@@ -1,0 +1,49 @@
+spec=default Serving data/files on port 4433 (policy=default)
+spec=default SERVER policy=default duration_ms=1592.1 cpu_ms=139.9 server_sent_pkts=14907 server_recv_pkts=191 server_recv_ack_frames=185 server_lost_pkts=333 server_congestion_events=11 server_rtt_us=12158 server_min_rtt_us=3288
+spec=default SERVER policy=default duration_ms=1258.5 cpu_ms=138.8 server_sent_pkts=14592 server_recv_pkts=217 server_recv_ack_frames=211 server_lost_pkts=40 server_congestion_events=3 server_rtt_us=7747 server_min_rtt_us=2678
+spec=default SERVER policy=default duration_ms=6797.5 cpu_ms=224.0 server_sent_pkts=14825 server_recv_pkts=357 server_recv_ack_frames=350 server_lost_pkts=268 server_congestion_events=21 server_rtt_us=6035 server_min_rtt_us=1540
+spec=fixed:2 Serving data/files on port 4433 (policy=fixed)
+spec=fixed:2 SERVER policy=fixed duration_ms=1803.1 cpu_ms=200.6 server_sent_pkts=14958 server_recv_pkts=963 server_recv_ack_frames=956 server_lost_pkts=378 server_congestion_events=17 server_rtt_us=5306 server_min_rtt_us=1524
+spec=fixed:2 SERVER policy=fixed duration_ms=1697.6 cpu_ms=171.7 server_sent_pkts=15171 server_recv_pkts=583 server_recv_ack_frames=576 server_lost_pkts=534 server_congestion_events=10 server_rtt_us=4729 server_min_rtt_us=1917
+spec=fixed:2 SERVER policy=fixed duration_ms=1397.9 cpu_ms=152.8 server_sent_pkts=14925 server_recv_pkts=692 server_recv_ack_frames=685 server_lost_pkts=353 server_congestion_events=12 server_rtt_us=5264 server_min_rtt_us=1618
+spec=fixed:10 Serving data/files on port 4433 (policy=fixed)
+spec=fixed:10 [mcn] conn=0x7b30680129d0 t_ms=8 threshold 2 -> 10 (fixed)
+spec=fixed:10 SERVER policy=fixed duration_ms=874.4 cpu_ms=143.7 server_sent_pkts=14712 server_recv_pkts=324 server_recv_ack_frames=318 server_lost_pkts=160 server_congestion_events=5 server_rtt_us=4639 server_min_rtt_us=2683
+spec=fixed:10 [mcn] conn=0x7b30680129d0 t_ms=7 threshold 2 -> 10 (fixed)
+spec=fixed:10 SERVER policy=fixed duration_ms=1076.9 cpu_ms=143.2 server_sent_pkts=14692 server_recv_pkts=394 server_recv_ack_frames=387 server_lost_pkts=144 server_congestion_events=5 server_rtt_us=5390 server_min_rtt_us=2571
+spec=fixed:10 [mcn] conn=0x7b30680129d0 t_ms=5 threshold 2 -> 10 (fixed)
+spec=fixed:10 SERVER policy=fixed duration_ms=719.2 cpu_ms=117.1 server_sent_pkts=15197 server_recv_pkts=329 server_recv_ack_frames=322 server_lost_pkts=646 server_congestion_events=4 server_rtt_us=22774 server_min_rtt_us=3037
+spec=fixed:100 Serving data/files on port 4433 (policy=fixed)
+spec=fixed:100 [mcn] conn=0x70cf480129d0 t_ms=9 threshold 2 -> 100 (fixed)
+spec=fixed:100 SERVER policy=fixed duration_ms=924.7 cpu_ms=135.1 server_sent_pkts=14748 server_recv_pkts=127 server_recv_ack_frames=120 server_lost_pkts=175 server_congestion_events=3 server_rtt_us=6127 server_min_rtt_us=2608
+spec=fixed:100 [mcn] conn=0x70cf480129d0 t_ms=5 threshold 2 -> 100 (fixed)
+spec=fixed:100 SERVER policy=fixed duration_ms=1217.6 cpu_ms=124.2 server_sent_pkts=14849 server_recv_pkts=132 server_recv_ack_frames=126 server_lost_pkts=298 server_congestion_events=6 server_rtt_us=7529 server_min_rtt_us=2226
+spec=fixed:100 [mcn] conn=0x70cf480129d0 t_ms=4 threshold 2 -> 100 (fixed)
+spec=fixed:100 SERVER policy=fixed duration_ms=2586.5 cpu_ms=137.8 server_sent_pkts=14709 server_recv_pkts=161 server_recv_ack_frames=155 server_lost_pkts=157 server_congestion_events=8 server_rtt_us=9373 server_min_rtt_us=2525
+spec=litequic Serving data/files on port 4433 (policy=litequic)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=911 threshold 2 -> 4 (cpu-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=926 threshold 4 -> 2 (bw-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=1292 threshold 2 -> 4 (cpu-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=1306 threshold 4 -> 2 (bw-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=1478 threshold 2 -> 4 (cpu-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=1483 threshold 4 -> 8 (cpu-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=1490 threshold 8 -> 16 (cpu-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=1496 threshold 16 -> 8 (bw-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=1504 threshold 8 -> 4 (bw-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=1512 threshold 4 -> 2 (bw-limited)
+spec=litequic SERVER policy=litequic duration_ms=1693.9 cpu_ms=159.3 server_sent_pkts=14718 server_recv_pkts=447 server_recv_ack_frames=439 server_lost_pkts=166 server_congestion_events=6 server_rtt_us=4858 server_min_rtt_us=1681
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=152 threshold 2 -> 4 (cpu-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=170 threshold 4 -> 8 (cpu-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=185 threshold 8 -> 4 (bw-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=199 threshold 4 -> 2 (bw-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=283 threshold 2 -> 4 (cpu-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=295 threshold 4 -> 2 (bw-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=828 threshold 2 -> 4 (cpu-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=835 threshold 4 -> 2 (bw-limited)
+spec=litequic SERVER policy=litequic duration_ms=1191.3 cpu_ms=150.3 server_sent_pkts=14789 server_recv_pkts=543 server_recv_ack_frames=536 server_lost_pkts=235 server_congestion_events=7 server_rtt_us=4815 server_min_rtt_us=1744
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=247 threshold 2 -> 5 (cpu-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=274 threshold 5 -> 2 (bw-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=396 threshold 2 -> 6 (cpu-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=405 threshold 6 -> 3 (bw-limited)
+spec=litequic [mcn] conn=0x72e4ec0129d0 t_ms=413 threshold 3 -> 2 (bw-limited)
+spec=litequic SERVER policy=litequic duration_ms=721.6 cpu_ms=134.6 server_sent_pkts=15467 server_recv_pkts=367 server_recv_ack_frames=360 server_lost_pkts=819 server_congestion_events=10 server_rtt_us=4607 server_min_rtt_us=1774

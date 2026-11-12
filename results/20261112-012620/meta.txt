@@ -1,0 +1,8 @@
+date=2026-11-12T01:26:20+05:30
+server=kunal@10.21.232.3 cc=cubic reps=1
+files=20MB.bin 100MB.bin
+policies=fixed:2 fixed:2+reorder adaptive+phase+reorder+delay
+server_loads=0 client_load=0
+client_commit=7121178 client_dirty=5 server_commit=7121178 server_dirty=0
+client_host=kunal-750XGK client_cores=12 client_kernel=7.0.0-38-generic
+server_host=netsys server_cores=28 server_kernel=7.0.0-38-generic

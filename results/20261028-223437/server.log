@@ -1,0 +1,94 @@
+spec=default Serving data/files on port 4433 (policy=default)
+spec=default SERVER tag=L0_default_20MB_r1 file=20MB.bin bytes=20971520 policy=default conn=0x733aac0129d0 duration_ms=582.6 cpu_ms=116.8 sys_cpu_pct=1.2 server_sent_pkts=14594 server_recv_pkts=169 server_recv_ack_frames=162 server_lost_pkts=40 server_congestion_events=2 server_rtt_us=26152 server_min_rtt_us=2342
+spec=default SERVER tag=L2x_default_20MB_r1 file=20MB.bin bytes=20971520 policy=default conn=0x733aac0129d0 duration_ms=689.6 cpu_ms=43.0 sys_cpu_pct=99.9 server_sent_pkts=15372 server_recv_pkts=210 server_recv_ack_frames=203 server_lost_pkts=812 server_congestion_events=1 server_rtt_us=81608 server_min_rtt_us=3822
+spec=fixed:2 Serving data/files on port 4434 (policy=fixed)
+spec=fixed:2 [mcn] conn=0x70d5d00129d0 t_ms=10 old=2 new=2 policy=fixed
+spec=fixed:2 SERVER tag=L0_fixed-2_20MB_r1 file=20MB.bin bytes=20971520 policy=fixed conn=0x70d5d00129d0 duration_ms=750.9 cpu_ms=114.4 sys_cpu_pct=1.2 server_sent_pkts=16633 server_recv_pkts=257 server_recv_ack_frames=250 server_lost_pkts=2050 server_congestion_events=1 server_rtt_us=96140 server_min_rtt_us=2993
+spec=fixed:2 [mcn] conn=0x70d5d00129d0 t_ms=10 old=2 new=2 policy=fixed
+spec=fixed:2 SERVER tag=L2x_fixed-2_20MB_r1 file=20MB.bin bytes=20971520 policy=fixed conn=0x70d5d00129d0 duration_ms=976.8 cpu_ms=39.9 sys_cpu_pct=100.0 server_sent_pkts=14594 server_recv_pkts=264 server_recv_ack_frames=257 server_lost_pkts=27 server_congestion_events=1 server_rtt_us=100682 server_min_rtt_us=4014
+spec=fixed:10 Serving data/files on port 4435 (policy=fixed)
+spec=fixed:10 [mcn] conn=0x7233f00129d0 t_ms=8 old=2 new=10 policy=fixed
+spec=fixed:10 SERVER tag=L0_fixed-10_20MB_r1 file=20MB.bin bytes=20971520 policy=fixed conn=0x7233f00129d0 duration_ms=891.8 cpu_ms=123.6 sys_cpu_pct=0.8 server_sent_pkts=15025 server_recv_pkts=245 server_recv_ack_frames=238 server_lost_pkts=452 server_congestion_events=1 server_rtt_us=119915 server_min_rtt_us=3918
+spec=fixed:10 [mcn] conn=0x7233f00129d0 t_ms=5 old=2 new=10 policy=fixed
+spec=fixed:10 SERVER tag=L2x_fixed-10_20MB_r1 file=20MB.bin bytes=20971520 policy=fixed conn=0x7233f00129d0 duration_ms=649.5 cpu_ms=40.3 sys_cpu_pct=100.0 server_sent_pkts=14598 server_recv_pkts=220 server_recv_ack_frames=213 server_lost_pkts=25 server_congestion_events=1 server_rtt_us=63885 server_min_rtt_us=3616
+spec=fixed:100 Serving data/files on port 4436 (policy=fixed)
+spec=fixed:100 [mcn] conn=0x7e98480129d0 t_ms=8 old=2 new=100 policy=fixed
+spec=fixed:100 SERVER tag=L0_fixed-100_20MB_r1 file=20MB.bin bytes=20971520 policy=fixed conn=0x7e98480129d0 duration_ms=803.2 cpu_ms=129.5 sys_cpu_pct=1.0 server_sent_pkts=14570 server_recv_pkts=115 server_recv_ack_frames=108 server_lost_pkts=5 server_congestion_events=1 server_rtt_us=12775 server_min_rtt_us=4154
+spec=fixed:100 [mcn] conn=0x7e98480129d0 t_ms=5 old=2 new=100 policy=fixed
+spec=fixed:100 SERVER tag=L2x_fixed-100_20MB_r1 file=20MB.bin bytes=20971520 policy=fixed conn=0x7e98480129d0 duration_ms=769.1 cpu_ms=38.8 sys_cpu_pct=100.0 server_sent_pkts=14812 server_recv_pkts=143 server_recv_ack_frames=136 server_lost_pkts=244 server_congestion_events=1 server_rtt_us=89692 server_min_rtt_us=3879
+spec=litequic Serving data/files on port 4437 (policy=litequic)
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=9 old=2 new=2 policy=litequic reason=start
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=19 old=2 new=2 policy=litequic ack_avg=1.00 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=31 old=2 new=2 policy=litequic ack_avg=1.00 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=38 old=2 new=2 policy=litequic ack_avg=1.00 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=50 old=2 new=2 policy=litequic ack_avg=1.00 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=59 old=2 new=2 policy=litequic ack_avg=1.33 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=73 old=2 new=2 policy=litequic ack_avg=1.50 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=97 old=2 new=12 policy=litequic ack_avg=6.00 reason=cpu-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=114 old=12 new=6 policy=litequic ack_avg=1.25 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=152 old=6 new=13 policy=litequic ack_avg=2.25 reason=cpu-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=204 old=13 new=27 policy=litequic ack_avg=2.14 reason=cpu-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=304 old=27 new=13 policy=litequic ack_avg=1.68 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=509 old=13 new=40 policy=litequic ack_avg=3.13 reason=cpu-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=601 old=40 new=155 policy=litequic ack_avg=3.88 reason=cpu-limited
+spec=litequic SERVER tag=L0_litequic_20MB_r1 file=20MB.bin bytes=20971520 policy=litequic conn=0x7c24740129d0 duration_ms=865.5 cpu_ms=112.3 sys_cpu_pct=1.0 server_sent_pkts=14630 server_recv_pkts=195 server_recv_ack_frames=187 server_lost_pkts=71 server_congestion_events=1 server_rtt_us=89973 server_min_rtt_us=2616
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=8 old=2 new=2 policy=litequic reason=start
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=18 old=2 new=2 policy=litequic ack_avg=1.00 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=28 old=2 new=2 policy=litequic ack_avg=1.00 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=36 old=2 new=2 policy=litequic ack_avg=1.00 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=43 old=2 new=2 policy=litequic ack_avg=1.00 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=49 old=2 new=2 policy=litequic ack_avg=1.00 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=57 old=2 new=2 policy=litequic ack_avg=1.50 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=66 old=2 new=2 policy=litequic ack_avg=1.33 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=78 old=2 new=5 policy=litequic ack_avg=2.50 reason=cpu-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=90 old=5 new=2 policy=litequic ack_avg=1.50 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=113 old=2 new=4 policy=litequic ack_avg=2.00 reason=cpu-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=148 old=4 new=9 policy=litequic ack_avg=2.33 reason=cpu-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=178 old=9 new=32 policy=litequic ack_avg=3.60 reason=cpu-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=204 old=32 new=64 policy=litequic ack_avg=2.00 reason=cpu-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=231 old=64 new=32 policy=litequic ack_avg=1.57 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=262 old=32 new=16 policy=litequic ack_avg=1.25 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=302 old=16 new=106 policy=litequic ack_avg=6.66 reason=cpu-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=329 old=106 new=53 policy=litequic ack_avg=1.00 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=353 old=53 new=26 policy=litequic ack_avg=1.25 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=376 old=26 new=58 policy=litequic ack_avg=2.25 reason=cpu-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=405 old=58 new=29 policy=litequic ack_avg=1.80 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=426 old=29 new=14 policy=litequic ack_avg=1.75 reason=bw-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=451 old=14 new=28 policy=litequic ack_avg=2.00 reason=cpu-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=473 old=28 new=61 policy=litequic ack_avg=2.20 reason=cpu-limited
+spec=litequic [mcn] conn=0x7c24740129d0 t_ms=495 old=61 new=30 policy=litequic ack_avg=1.50 reason=bw-limited
+spec=litequic SERVER tag=L2x_litequic_20MB_r1 file=20MB.bin bytes=20971520 policy=litequic conn=0x7c24740129d0 duration_ms=535.0 cpu_ms=63.2 sys_cpu_pct=99.9 server_sent_pkts=14576 server_recv_pkts=215 server_recv_ack_frames=209 server_lost_pkts=19 server_congestion_events=2 server_rtt_us=17817 server_min_rtt_us=3927
+spec=adaptive Serving data/files on port 4438 (policy=adaptive)
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=11 old=2 new=2 policy=adaptive reason=start
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=36 old=2 new=2 policy=adaptive cpu_pct=32 cpu_sample_pct=65 cwnd_pkts=19 t_net=4 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=56 old=2 new=2 policy=adaptive cpu_pct=21 cpu_sample_pct=11 cwnd_pkts=73 t_net=18 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=78 old=2 new=2 policy=adaptive cpu_pct=19 cpu_sample_pct=17 cwnd_pkts=357 t_net=89 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=100 old=2 new=2 policy=adaptive cpu_pct=15 cpu_sample_pct=11 cwnd_pkts=574 t_net=143 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=120 old=2 new=2 policy=adaptive cpu_pct=21 cpu_sample_pct=27 cwnd_pkts=1274 t_net=255 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=147 old=2 new=2 policy=adaptive cpu_pct=18 cpu_sample_pct=15 cwnd_pkts=892 t_net=223 loss=1
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=173 old=2 new=2 policy=adaptive cpu_pct=20 cpu_sample_pct=23 cwnd_pkts=892 t_net=223 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=196 old=2 new=2 policy=adaptive cpu_pct=20 cpu_sample_pct=20 cwnd_pkts=893 t_net=223 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=224 old=2 new=2 policy=adaptive cpu_pct=17 cpu_sample_pct=14 cwnd_pkts=893 t_net=223 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=245 old=2 new=2 policy=adaptive cpu_pct=24 cpu_sample_pct=31 cwnd_pkts=894 t_net=223 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=271 old=2 new=2 policy=adaptive cpu_pct=22 cpu_sample_pct=21 cwnd_pkts=895 t_net=223 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=297 old=2 new=2 policy=adaptive cpu_pct=19 cpu_sample_pct=16 cwnd_pkts=896 t_net=224 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=317 old=2 new=2 policy=adaptive cpu_pct=22 cpu_sample_pct=26 cwnd_pkts=896 t_net=224 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=342 old=2 new=2 policy=adaptive cpu_pct=21 cpu_sample_pct=21 cwnd_pkts=897 t_net=224 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=367 old=2 new=2 policy=adaptive cpu_pct=21 cpu_sample_pct=22 cwnd_pkts=898 t_net=224 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=403 old=2 new=2 policy=adaptive cpu_pct=16 cpu_sample_pct=12 cwnd_pkts=899 t_net=224 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=431 old=2 new=2 policy=adaptive cpu_pct=16 cpu_sample_pct=17 cwnd_pkts=899 t_net=224 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=453 old=2 new=2 policy=adaptive cpu_pct=18 cpu_sample_pct=20 cwnd_pkts=900 t_net=225 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=485 old=2 new=2 policy=adaptive cpu_pct=17 cpu_sample_pct=16 cwnd_pkts=901 t_net=225 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=515 old=2 new=2 policy=adaptive cpu_pct=17 cpu_sample_pct=18 cwnd_pkts=902 t_net=225 loss=0
+spec=adaptive SERVER tag=L0_adaptive_20MB_r1 file=20MB.bin bytes=20971520 policy=adaptive conn=0x7bd1e00129d0 duration_ms=594.0 cpu_ms=126.3 sys_cpu_pct=1.2 server_sent_pkts=14614 server_recv_pkts=246 server_recv_ack_frames=240 server_lost_pkts=58 server_congestion_events=1 server_rtt_us=27090 server_min_rtt_us=4235
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=7 old=2 new=2 policy=adaptive reason=start
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=28 old=2 new=2 policy=adaptive cpu_pct=27 cpu_sample_pct=55 cwnd_pkts=35 t_net=8 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=48 old=2 new=2 policy=adaptive cpu_pct=30 cpu_sample_pct=33 cwnd_pkts=189 t_net=47 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=70 old=2 new=2 policy=adaptive cpu_pct=30 cpu_sample_pct=31 cwnd_pkts=696 t_net=174 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=97 old=2 new=2 policy=adaptive cpu_pct=21 cpu_sample_pct=12 cwnd_pkts=888 t_net=222 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=119 old=2 new=2 policy=adaptive cpu_pct=32 cpu_sample_pct=43 cwnd_pkts=2189 t_net=255 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=155 old=2 new=2 policy=adaptive cpu_pct=34 cpu_sample_pct=36 cwnd_pkts=3251 t_net=255 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=258 old=2 new=2 policy=adaptive cpu_pct=30 cpu_sample_pct=27 cwnd_pkts=4160 t_net=255 loss=1
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=415 old=2 new=2 policy=adaptive cpu_pct=24 cpu_sample_pct=19 cwnd_pkts=4160 t_net=255 loss=0
+spec=adaptive [mcn] conn=0x7bd1e00129d0 t_ms=534 old=2 new=2 policy=adaptive cpu_pct=21 cpu_sample_pct=19 cwnd_pkts=4162 t_net=255 loss=0
+spec=adaptive SERVER tag=L2x_adaptive_20MB_r1 file=20MB.bin bytes=20971520 policy=adaptive conn=0x7bd1e00129d0 duration_ms=778.0 cpu_ms=61.5 sys_cpu_pct=100.0 server_sent_pkts=15205 server_recv_pkts=271 server_recv_ack_frames=264 server_lost_pkts=650 server_congestion_events=1 server_rtt_us=117420 server_min_rtt_us=4190
