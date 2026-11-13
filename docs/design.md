@@ -33,7 +33,7 @@ selected per process with `quicfile -policy:...` (environment variable
 | `default` | Unchanged msquic: raises `T` to its send batch size + 1 when scheduling-limited, resets to 2 on persistent congestion |
 | `fixed:N` | `T = N` for the whole connection (`fixed:2` is the RFC 9000 behaviour) |
 | `litequic` | LiteQUIC (MM'24): once per SRTT, `ACK_avg` = ACK frames per receive flush. `ACK_avg ≥ 2` → `T = T × ACK_avg`, else `T = max(T/2, 2)` |
-| `adaptive` | **Ours, CPU only**: `T` scales with CPU pressure up to a fixed maximum (100) |
+| `adaptive[:N]` | **Ours, CPU only**: `T` scales with CPU pressure up to a ceiling `N` (default 100, at most 255) |
 | `adaptive` + `-acknet:1` | **Ours, CPU + network**: the maximum comes from cwnd, queueing delay and loss |
 
 ### `adaptive`
@@ -68,6 +68,23 @@ Design rationale and history:
 - **Queueing condition.** Requires both 2× inflation *and* 5 ms of extra delay: on
   LAN/loopback the minimum RTT is tens of microseconds, so the ratio alone is
   triggered by any jitter.
+
+## The threshold ceiling
+
+Under full load `adaptive` sits at its ceiling, so the ceiling decides how far ACKs are
+reduced. Why there must be one:
+
+- msquic stores the threshold in 8 bits (`PeerPacketTolerance`, `PacketTolerance`), so 255
+  is the maximum on both sides.
+- With `T` above the packets in flight the receiver can only ACK on its max-ACK-delay timer
+  (25 ms), so a window-limited sender waits up to 25 ms per round trip.
+- Loss detection (RFC 9002) and Cubic's window growth and pacing run on ACK arrivals; sparse
+  ACKs delay recovery and make sending burstier.
+- Custura et al. keep several ACKs per RTT; `+net` keeps at least 4 per congestion window.
+
+The default 100 (`MCN_ACK_MAX`) is LiteQUIC's largest tested value, not a tuned optimum.
+`adaptive:N` (runner) / `-ackmax:N` (quicfile) sets it; the evaluation compares 100 with 255
+and with the window-based ceiling of `+net`.
 
 ## Modifiers: `+phase`, `+reorder`, `+delay`
 
@@ -106,7 +123,7 @@ high packet rates.
 2. Fixed threshold: `fixed:100` (LiteQUIC's largest tested value; `fixed:10` in earlier runs)
 3. msquic's built-in heuristic: `default`
 4. LiteQUIC's adaptive rule: `litequic`
-5. Ours: `adaptive`, its modifiers, and `adaptive+net`
+5. Ours: `adaptive` (ceiling 100), `adaptive:255`, its modifiers, and `adaptive+net`
 
 ## Deferred ideas (brainstorm, not implemented)
 

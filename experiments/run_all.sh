@@ -6,26 +6,38 @@
 #
 # Check the link first: both machines' interfaces must run at the expected speed
 # (cat /sys/class/net/<iface>/speed); a gigabit port at 100 Mbit/s caps everything.
+# Do not edit tracked files while it runs: every experiment checks that both machines
+# are on the same clean commit.
+#
+#   EXPERIMENTS   which experiments to run  [1 2 3]
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+EXPERIMENTS="${EXPERIMENTS:-1 2 3}"
 
 runs=()
 run() {
-    local out
-    out=$(env "$@" experiments/run_quicfile.sh | tee /dev/stderr | sed -n 's/^Results in //p' | tail -1)
+    local log out
+    log=$(mktemp)
+    env "$@" experiments/run_quicfile.sh 2>&1 | tee "$log"
+    out=$(sed -n 's/^Results in //p' "$log" | tail -1)
+    rm -f "$log"
+    [[ -n "$out" ]] || { echo "experiment did not finish" >&2; exit 1; }
     runs+=("$out")
 }
 
-# 1. Downloads: 12 policy variants x 4 files (20 MB-1 GB) x server load 0/2x/4x x 3 repetitions.
-run FILES="20MB.bin 100MB.bin 500MB.bin 1GB.bin" SERVER_LOADS="0 2x 4x" REPS=3
-
-# 2. Load sweep: how the threshold and goodput follow the server load.
-run FILES=500MB.bin REPS=2 SERVER_LOADS="0 0.25x 0.5x 0.75x 1x 2x 4x" \
-    POLICIES="fixed:2 adaptive adaptive:255 adaptive+net+phase+reorder+delay"
-
-# 3. Video streaming QoE: 40 s of video in 2 s segments, bitrate ladder 25-400 Mbit/s.
-run WORKLOAD=video SERVER_LOADS="0 2x 4x" REPS=3 \
-    POLICIES="fixed:2 default fixed:100 fixed:100+phase litequic adaptive adaptive:255 adaptive+phase+reorder+delay"
+for experiment in $EXPERIMENTS; do
+    case "$experiment" in
+        # 1. Downloads: 12 policy variants x 4 files (20 MB-1 GB) x server load 0/2x/4x x 3 reps.
+        1) run FILES="20MB.bin 100MB.bin 500MB.bin 1GB.bin" SERVER_LOADS="0 2x 4x" REPS=3 ;;
+        # 2. Load sweep: how the threshold and goodput follow the server load.
+        2) run FILES=500MB.bin REPS=2 SERVER_LOADS="0 0.25x 0.5x 0.75x 1x 2x 4x" \
+               POLICIES="fixed:2 adaptive adaptive:255 adaptive+net+phase+reorder+delay" ;;
+        # 3. Video streaming QoE: 40 s of video in 2 s segments, bitrate ladder 25-400 Mbit/s.
+        3) run WORKLOAD=video SERVER_LOADS="0 2x 4x" REPS=3 \
+               POLICIES="fixed:2 default fixed:100 fixed:100+phase litequic adaptive adaptive:255 adaptive+phase+reorder+delay" ;;
+        *) echo "unknown experiment $experiment" >&2; exit 1 ;;
+    esac
+done
 
 for out in "${runs[@]}"; do
     python3 analysis/plot.py "$out"
