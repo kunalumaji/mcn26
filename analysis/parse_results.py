@@ -6,11 +6,15 @@
 Reads client.log and server.log; writes:
   runs.csv           one row per download (client RESULT joined with server SERVER by tag,
                      plus the ACK-cost statistics msquic prints as [mcn-stats])
+  videos.csv         one row per video session (client VIDEO line, same joins), for
+                     WORKLOAD=video runs
   ack_decisions.csv  every ACK policy decision ([mcn] lines), with the run's tag
   summary.csv        medians per (server load, policy, file); also printed as a table
-cpu_client.csv / cpu_server.csv (written by scripts/cpumon.py) are left as they are.
+tput.log (throughput per 100 ms), segments.log (one line per video segment) and
+cpu_client.csv / cpu_server.csv (scripts/cpumon.py) are left as they are.
 """
 import csv
+import re
 import statistics
 import sys
 from collections import defaultdict
@@ -32,13 +36,15 @@ def num(value):
 
 
 def parse_client(path):
+    """{tag: fields} from the RESULT (download) and VIDEO (video session) lines."""
     runs = {}
     for line in path.read_text().splitlines():
-        if "RESULT" not in line:
+        match = re.search(r"\b(RESULT|VIDEO)\b", line)
+        if not match:
             continue
-        head, result = line.split("RESULT", 1)
-        row = kv(head.split())
-        row.update(kv(result.split()))
+        row = kv(line[:match.start()].split())
+        row.update(kv(line[match.end():].split()))
+        row["kind"] = match.group(1)
         row["ok"] = 0 if "FAILED" in row else 1
         runs[row["tag"]] = row
     return runs
@@ -85,6 +91,12 @@ def download_seconds(c):
     return None
 
 
+def file_mb(name):
+    """'20MB.bin' -> 20, '1GB.bin' -> 1024 (for sorting); anything else -> 0."""
+    size = num(name.replace(".bin", "").rstrip("MGB")) or 0
+    return size * 1024 if "GB" in name else size
+
+
 def per_mb(value, mb, scale=1.0):
     """value * scale / mb, or None if either is missing."""
     value = num(value)
@@ -123,8 +135,9 @@ def main():
         recv = num(c.get("client_recv_pkts"))
         server_cpu = num(s.get("cpu_ms"))
         client_cpu = num(c.get("cpu_ms"))
-        rows.append({
+        row = {
             "tag": tag,
+            "kind": "video" if c["kind"] == "VIDEO" else "download",
             "server_load": c["load"],
             "spec": spec,
             "policy": spec.split("+")[0].split(":")[0],
@@ -135,11 +148,25 @@ def main():
             "start_ts": c["start_ts"],
             "end_ts": c["end_ts"],
             "bytes": bytes_,
-            "download_s": download_seconds(c),
-            "goodput_mbps": num(c.get("goodput_mbps")),
-            "transfer_ms": num(c.get("transfer_ms")),
-            "handshake_ms": num(c.get("handshake_ms")),
-            "ttfb_ms": num(c.get("ttfb_ms")),
+        }
+        if c["kind"] == "VIDEO":
+            row.update({k: num(c.get(k)) for k in [
+                "segments", "startup_ms", "avg_bitrate_mbps", "switches", "switch_mbps",
+                "rebuffer_events", "rebuffer_ms", "qoe", "session_ms",
+                "seg_tput_p10_mbps", "seg_tput_p50_mbps"]})
+        else:
+            row.update({
+                "download_s": download_seconds(c),
+                "goodput_mbps": num(c.get("goodput_mbps")),
+                # Throughput in 100 ms intervals of the transfer (percentiles over intervals).
+                "tput_p10_mbps": num(c.get("tput_p10_mbps")),
+                "tput_p50_mbps": num(c.get("tput_p50_mbps")),
+                "tput_p90_mbps": num(c.get("tput_p90_mbps")),
+                "transfer_ms": num(c.get("transfer_ms")),
+                "handshake_ms": num(c.get("handshake_ms")),
+                "ttfb_ms": num(c.get("ttfb_ms")),
+            })
+        row.update({
             "client_cpu_ms": client_cpu,
             "client_cpu_ms_per_mb": client_cpu / mb if client_cpu and mb else None,
             "client_sys_cpu_pct": num(c.get("sys_cpu_pct")),
@@ -168,11 +195,15 @@ def main():
             "threshold_decisions": len(by_tag.get(tag, [])),
             "threshold_mean": mean_threshold(by_tag.get(tag, []), num(s.get("duration_ms"))),
         })
+        rows.append(row)
 
-    with open(out / "runs.csv", "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()) if rows else ["tag"])
-        writer.writeheader()
-        writer.writerows(rows)
+    for kind, name in [("download", "runs.csv"), ("video", "videos.csv")]:
+        subset = [r for r in rows if r["kind"] == kind]
+        if subset or kind == "download":
+            with open(out / name, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=list(subset[0].keys()) if subset else ["tag"])
+                writer.writeheader()
+                writer.writerows(subset)
 
     fields = ["tag", "spec", "policy", "t_ms", "old", "new"]
     extra = sorted({k for d in decisions for k in d} - set(fields) - {"conn"})
@@ -181,7 +212,8 @@ def main():
         writer.writeheader()
         writer.writerows(decisions)
 
-    metrics = ["download_s", "goodput_mbps", "data_pkts_per_ack", "server_recv_ack_frames",
+    metrics = ["download_s", "goodput_mbps", "tput_p10_mbps", "avg_bitrate_mbps", "rebuffer_ms",
+               "startup_ms", "switches", "qoe", "data_pkts_per_ack", "server_recv_ack_frames",
                "server_recv_us_per_mb", "server_ack_proc_us_per_mb", "client_send_us_per_mb",
                "client_cpu_ms_per_mb", "server_cpu_ms_per_mb", "threshold_mean",
                "server_lost_pkts", "client_reordered_pkts", "client_sys_cpu_pct",
@@ -194,22 +226,25 @@ def main():
     for (load, spec, file), group in groups.items():
         entry = {"server_load": load, "spec": spec, "file": file, "n": len(group)}
         for m in metrics:
-            values = [r[m] for r in group if r[m] is not None]
+            values = [r[m] for r in group if r.get(m) is not None]
             entry[m] = round(statistics.median(values), 2) if values else None
         summary.append(entry)
     order = {s: i for i, s in enumerate(dict.fromkeys(r["spec"] for r in rows))}
-    summary.sort(key=lambda e: (e["server_load"], num(e["file"].rstrip("MGB.bin")) or 0,
-                                "GB" in e["file"], order[e["spec"]]))
+    summary.sort(key=lambda e: (e["server_load"], file_mb(e["file"]), order[e["spec"]]))
+    metrics = [m for m in metrics if any(e[m] is not None for e in summary)]
     with open(out / "summary.csv", "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["server_load", "spec", "file", "n"] + metrics)
+        writer = csv.DictWriter(f, fieldnames=["server_load", "spec", "file", "n"] + metrics,
+                                extrasaction="ignore")
         writer.writeheader()
         writer.writerows(summary)
 
     failed = sum(1 for r in rows if not r["ok"])
-    print(f"{len(rows)} downloads ({failed} failed), {len(decisions)} ACK decisions")
-    cols = ["server_load", "file", "spec", "n", "download_s", "data_pkts_per_ack",
-            "server_recv_us_per_mb", "client_send_us_per_mb", "threshold_mean",
-            "client_reordered_pkts"]
+    print(f"{len(rows)} runs ({failed} failed), {len(decisions)} ACK decisions")
+    cols = ["server_load", "file", "spec", "n",
+            *(["avg_bitrate_mbps", "rebuffer_ms", "qoe"] if "qoe" in metrics
+              else ["download_s", "goodput_mbps"]),
+            "data_pkts_per_ack", "server_recv_us_per_mb", "client_send_us_per_mb",
+            "threshold_mean"]
     widths = [max(len(c), *(len(str(e[c])) for e in summary)) for c in cols] if summary else []
     print("  ".join(c.ljust(w) for c, w in zip(cols, widths)))
     for e in summary:

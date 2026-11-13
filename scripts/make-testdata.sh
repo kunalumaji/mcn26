@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Create the files served by quicfile, plus a self-signed TLS certificate.
+# Create the files served by quicfile (downloads and video segments), plus a
+# self-signed TLS certificate.
 #
 #   scripts/make-testdata.sh            # into data/
 #   DATA_DIR=/path scripts/make-testdata.sh
@@ -8,6 +9,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="${DATA_DIR:-$ROOT/data}"
 SIZES_MB=(20 100 500 1024)
+# Video segments: one 2-second segment file per bitrate (Mbit/s), video_<rate>M.bin;
+# the client requests the same file for every segment of that bitrate.
+VIDEO_RATES_MBPS=(10 25 50 100 150 200 300 400)
+VIDEO_SEGMENT_S=2
 
 mkdir -p "$DATA_DIR/files"
 
@@ -25,6 +30,15 @@ for mb in "${SIZES_MB[@]}"; do
     if [[ ! -f "$f" || $(stat -c %s "$f") -ne $((mb * 1024 * 1024)) ]]; then
         echo "==> Creating $f"
         head -c "$((mb * 1024 * 1024))" /dev/urandom > "$f"
+    fi
+done
+
+for rate in "${VIDEO_RATES_MBPS[@]}"; do
+    f="$DATA_DIR/files/video_${rate}M.bin"
+    bytes=$((rate * 1000000 * VIDEO_SEGMENT_S / 8))
+    if [[ ! -f "$f" || $(stat -c %s "$f") -ne $bytes ]]; then
+        echo "==> Creating $f"
+        head -c "$bytes" /dev/urandom > "$f"
     fi
 done
 
