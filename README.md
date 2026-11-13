@@ -221,7 +221,7 @@ python3 analysis/summarize.py results/<timestamp>   # the report's tables (markd
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SERVER` | `kunal@10.21.232.3` | SSH target of the server |
+| `SERVER` | `sense-student@10.21.237.7` | SSH target of the server (our runs from Nov 14; earlier runs used `kunal@10.21.232.3`) |
 | `SERVER_IP` | host part of `SERVER` | Address the client downloads from |
 | `SERVER_ROOT` | `Documents/mcn26` | Repo path on the server, relative to its home |
 | `WORKLOAD` | `files` | `files`: download each of `FILES`; `video`: one video session per run |

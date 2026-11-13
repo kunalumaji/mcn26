@@ -24,7 +24,7 @@
 #   CLIENT_LOAD    client CPU load during all runs (same format)  [0]
 #   REPS           repetitions per (load, file, policy)  [3]
 #   CC             cubic | bbr  [cubic]
-#   SERVER         SSH target  [kunal@10.21.232.3]
+#   SERVER         SSH target  [sense-student@10.21.237.7]
 #   SERVER_ROOT    repo path on the server, relative to its home  [Documents/mcn26]
 #   ALLOW_DIRTY=1  skip the same-commit check
 #
@@ -32,7 +32,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SERVER="${SERVER:-kunal@10.21.232.3}"
+SERVER="${SERVER:-sense-student@10.21.237.7}"
 SERVER_IP="${SERVER_IP:-${SERVER#*@}}"
 SERVER_ROOT="${SERVER_ROOT:-Documents/mcn26}"
 WORKLOAD="${WORKLOAD:-files}"
