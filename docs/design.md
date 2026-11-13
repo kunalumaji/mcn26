@@ -52,10 +52,14 @@ In short, every `max(SRTT, 20 ms)`:
 
 Design rationale and history:
 - **Two CPU signals.** The first version used only the QUIC thread's pressure
-  (`(on-CPU + runqueue wait) / wall time`). At Wi-Fi rates the thread needs only a
-  fraction of a core and is scheduled promptly even on a fully loaded machine, so it
-  stayed at 20–35% and the policy never reacted to high overall CPU. Whole-machine
-  utilisation was added: when the server is busy, ACK work is taken from other work.
+  (`(on-CPU + runqueue wait) / wall time`). In our runs up to Nov 12 it stayed at 20–35% on a
+  "fully loaded" server, so the policy never reacted. The reason (found Nov 14) was the load
+  generator, not the signal: the busy loops ran in their own session, and Linux's scheduler
+  autogroups share CPU fairly between sessions before threads, so the QUIC thread was still
+  scheduled almost immediately. Whole-machine utilisation was added as a second signal (when
+  the server is busy, ACK work is taken from other work); both are kept. Since Nov 14 the
+  load runs in the servers' session (`scripts/server-session.sh`) and does compete with
+  the QUIC threads.
 - **Network as an option.** `-acknet:1` separates the contribution of network
   awareness: with it off, `adaptive` is a pure CPU-driven policy that can be compared
   with `fixed:100` (same maximum) and `litequic`.

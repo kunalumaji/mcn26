@@ -14,17 +14,13 @@ reimplementation of LiteQUIC's rule, and our CPU-driven `adaptive` policy) plus 
 modifiers that use the other fields of the `ACK_FREQUENCY` frame and the congestion state
 (`+phase`, `+reorder`, `+delay`). We added nanosecond instrumentation of ACK handling to
 msquic and evaluated 11 policy variants on 264 file downloads (20 MB–1 GB) between two
-machines over Wi-Fi, with and without a fully loaded server, plus 55 downloads over a 100 Mbit/s
-wired link.
-Two regimes emerged. When the receiver acknowledges nearly every other packet (wired
-100 Mbit/s link), the ACK frequency dominates ACK cost: `T = 100` cuts the server's ACK-handling
-time by 82% and the client's ACK-generation time by 95% at equal download time, and our `+phase`
-modifier removes the small-file slowdown that large thresholds cause. At ~600 Mbit/s over Wi-Fi,
-msquic's receive batching already yields ~56 data packets per ACK at `T = 2`; there `adaptive`
-keeps `T = 2` on an idle server, raises it to ~91 under full CPU load, halves the ACK count and
-cuts client ACK cost by 48% without slowing downloads, while server-side ACK cost is dominated
-by per-acknowledged-packet work that no ACK policy removes. LiteQUIC's rule misreads Wi-Fi ACK
-bursts as CPU overload.
+machines over Wi-Fi, with and without a fully loaded server.
+At ~600 Mbit/s, msquic's receive batching already yields ~56 data packets per ACK at `T = 2`.
+`adaptive` keeps `T = 2` on an idle server, raises it to ~91 under full CPU load, halves the ACK
+count and cuts the client's ACK cost by 48% without slowing downloads, while the server-side ACK
+cost is dominated by per-acknowledged-packet work that no ACK policy removes. Our `+phase`
+modifier removes the small-file slowdown that large thresholds cause, and LiteQUIC's rule
+misreads Wi-Fi ACK bursts as CPU overload.
 
 ## 1. Introduction
 
@@ -143,19 +139,13 @@ LiteQUIC's ACK merge) are listed in [design.md](design.md) as future work.
 ## 5. Methodology
 
 **Testbed.** Server: Intel Core i7-14700 (28 cores), 31 GB, Ubuntu 24.04, kernel 7.0, wired
-1 Gbit/s to the campus LAN. Client: Intel Core i5-1335U (12 cores), 15 GB, same OS. CPU frequency
-governor `powersave` on both (no root to change it). Congestion control Cubic, pacing on.
-Two client paths:
-- **Wi-Fi (main run)**: client on campus Wi-Fi, ~600 Mbit/s to the server.
-- **Wired (supplementary)**: same LAN subnet, but the client's link negotiated **100 Mbit/s**
-  although both ends support 1 Gbit/s (faulty cable); minimum RTT 0.55 ms, ~30 ms when a download
-  fills the link's queue. This run was stopped after its no-load phase to replace the cable, and
-  the remaining experiment was then done over Wi-Fi.
+1 Gbit/s to the campus LAN. Client: Intel Core i5-1335U (12 cores), 15 GB, same OS, on campus
+Wi-Fi with ~600 Mbit/s to the server. CPU frequency governor `powersave` on both (no root to
+change it). Congestion control Cubic, pacing on.
 
 **Workload.** Downloads of 20 MB, 100 MB, 500 MB and 1 GB files of random data (one connection at
 a time), 11 policy variants, 3 repetitions, two server CPU loads: none, and **2x** = 56 busy-loop
-processes (2 per core) at normal priority, so the machine is 100% busy. 264 downloads (Wi-Fi run;
-the wired run used 20–500 MB). All policies are interleaved within each repetition and their order
+processes (2 per core) at normal priority, so the machine is 100% busy. 264 downloads. All policies are interleaved within each repetition and their order
 rotates between repetitions.
 
 **Metrics** (per download): download time (connection start to last byte); ACK frames received
@@ -173,10 +163,8 @@ SERVER_LOADS="0 2x" experiments/run_quicfile.sh` (default policy list), then
 
 ## 6. Results
 
-Main data set: **Wi-Fi run `20261112-012708`** (client ~600 Mbit/s, 264 downloads, 261
-successful). Supplementary: **wired run `20261112-010521`** (100 Mbit/s, no server load only;
-interrupted after 55 downloads when the cable was replaced, every policy and file measured at
-least once). Tables are produced by `analysis/summarize.py`, figures by `analysis/plot.py`.
+Data set: **run `20261112-012708`** (client on Wi-Fi, ~600 Mbit/s, 264 downloads, 261
+successful). Tables are produced by `analysis/summarize.py`, figures by `analysis/plot.py`.
 
 ### 6.1 Policies behave as designed
 
@@ -190,8 +178,7 @@ least once). Tables are produced by `analysis/summarize.py`, figures by `analysi
   spend more of their time ramping up). It sends 0–3 `ACK_FREQUENCY` frames per second.
 - **`litequic`** oscillates between 2 and 255 and sends ~70 `ACK_FREQUENCY` frames per second.
   On Wi-Fi it raises `T` even on an **idle** server (mean `T` ≈ 59): the access point delivers
-  ACKs in bursts, which its ACK-backlog signal reads as CPU overload. On the wired link (no
-  bursts) it correctly stays at `T = 2`.
+  ACKs in bursts, which its ACK-backlog signal reads as CPU overload.
 - **`+phase`** drops `T` to 2 during each loss recovery and caps it during slow start;
   **`+net`** additionally follows the congestion window and queueing delay (Figure 1).
 
@@ -203,27 +190,11 @@ least once). Tables are produced by `analysis/summarize.py`, figures by `analysi
 
 On Wi-Fi, `fixed:2` already produces only ~13 ACKs per MB (~56 data packets per ACK): msquic sends
 one ACK per receive batch, not per `T` packets (§7). Raising `T` can therefore at most halve the
-ACK count here: `fixed:100` 5.8/MB, `adaptive` under load 6.4/MB (−51% vs `fixed:2`). On the wired
-link, `fixed:2` produces 365 ACKs per MB (2 packets per ACK) and `fixed:100` 8 per MB (−98%).
+ACK count here: `fixed:100` 5.8/MB, `adaptive` under load 6.4/MB (−51% vs `fixed:2`).
 
-### 6.3 ACK cost: two regimes
+### 6.3 ACK cost
 
-**Wired, 100 Mbit/s, no server load** (one ACK per 2 packets at `T = 2`; n = 5 per policy):
-
-| Policy | ACKs/MB | Server ACK µs/MB | vs `fixed:2` | Client ACK µs/MB | vs `fixed:2` | 20 MB download |
-|---|---|---|---|---|---|---|
-| `fixed:2` | 365 | 2220 | 1.00 | 2772 | 1.00 | 1.82 s |
-| `default` | 365 | 2325 | 1.05 | 2605 | 0.94 | 1.82 s |
-| `fixed:100` | 8 | 405 | **0.18** | 148 | **0.05** | 1.89 s |
-| `fixed:100+phase` | 14 | 449 | **0.20** | 193 | **0.07** | 1.81 s |
-| `litequic` | 365 | 2189 | 0.99 | 2594 | 0.94 | 1.82 s |
-| `adaptive` (idle server → `T = 2`) | 366 | 2204 | 0.99 | 2709 | 0.98 | 1.82 s |
-
-When the receiver ACKs this often, ACK handling is a large cost and a high threshold removes most
-of it on both sides: the per-ACK overheads (decrypting and parsing a packet, a system call, a
-loss-detection pass) disappear, while the work per acknowledged packet stays.
-
-**Wi-Fi, ~600 Mbit/s** (pooled over 4 file sizes, n = 11–12; IQR in brackets):
+Pooled over the 4 file sizes (n = 11–12 per row; IQR in brackets):
 
 | Load | Policy | ACKs/MB | Mean `T` | Server ACK µs/MB | vs `fixed:2` | Client ACK µs/MB | vs `fixed:2` | Download time vs `fixed:2` |
 |---|---|---|---|---|---|---|---|---|
@@ -254,7 +225,7 @@ printed by `analysis/summarize.py`.
   `fixed:2`.
 - **Server:** with ~56 packets per ACK already, the remaining server cost is mostly per
   *acknowledged packet* (each ACK frame took 12–25 µs at `T = 2` and 28–52 µs at `T = 100`,
-  versus 2.4 µs per frame on the wired link where each ACK covers 2 packets). Halving the ACK
+  ). Halving the ACK
   count changed it by at most −12% (`fixed:100`). `adaptive` under load measured +35% (IQR
   256–297 vs 198–210 µs/MB) despite half the ACKs; its CPU readings run outside the timed code and
   cost 14 µs per decision (~10 µs/MB), so this remains unexplained (cache effects of reading
@@ -271,8 +242,8 @@ printed by `analysis/summarize.py`.
 *Figure 5: download time relative to `fixed:2` per file size and load (Wi-Fi).*
 
 - **Large `T` slows small transfers; `+phase` fixes it.** 20 MB with `fixed:100` took
-  0.37 s vs 0.27–0.28 s with `fixed:2` (+35%, both loads; wired: 1.89 vs 1.82 s). With `+phase`,
-  0.26–0.27 s (wired 1.81 s), while keeping 80–93% of the ACK savings on the wired link.
+  0.37 s vs 0.27–0.28 s with `fixed:2` (+35%, both loads). With `+phase`, 0.26–0.27 s, while
+  keeping almost all of the ACK savings (6.1 vs 5.8 ACKs/MB idle).
 - `fixed:100` is the only policy consistently slower overall (median +10% on Wi-Fi).
 - **`adaptive` costs no download time**: 0.976× `fixed:2` under load, IQR 0.933–1.088.
 - Otherwise Wi-Fi variability (IQRs of ±5–40% on 100 MB–1 GB) is larger than any difference
@@ -284,7 +255,7 @@ printed by `analysis/summarize.py`.
 | Modifier | Effect observed | Interpretation |
 |---|---|---|
 | `+phase` | Removes the small-file penalty of large `T` (§6.4); under load ACKs 8.7/MB vs 6.4 for `adaptive` (`T` drops to 2 in recovery) | Works as intended; costs some ACK savings during loss recovery |
-| `+reorder` | **No reordered packet in 316 downloads** on either link, so no effect is possible; differences are noise | Wi-Fi delivers frames in order to the host; the modifier matters only on paths with real reordering (multipath, load balancing) |
+| `+reorder` | **No reordered packet in 261 downloads**, so no effect is possible; differences are noise | Wi-Fi delivers frames in order to the host; the modifier matters only on paths with real reordering (multipath, load balancing) |
 | `+delay` | Under load ACKs 8.7/MB vs 6.4 (`adaptive`): an SRTT/4 timer (1–10 ms) fires before 100 packets accumulate | Trades ACK savings for timelier feedback; no download-time gain measured |
 | `+net` | More conservative: under load mean `T` 53 vs 91, 11.6 ACKs/MB; backs off on loss and queueing (Figure 1) | No benefit measurable here: no shallow-buffer or lossy path was emulated (no root for netem) |
 
@@ -302,9 +273,9 @@ printed by `analysis/summarize.py`.
 **When does ACK frequency matter?** It matters when the receiver actually ACKs often.
 msquic's receiver sends one ACK per *receive batch* (reaching `T` only marks an ACK as due), so at
 high packet rates it already ACKs every ~50–60 packets, and the ACK frequency extension can only
-remove the rest. When packets arrive spaced out (the 100 Mbit/s link) or in stacks without such
-batching (Zhang et al. [1] measured Chromium; LiteQUIC [2] measured nginx-quic), ACKs are frequent
-and a higher threshold removes most of their cost on both ends.
+remove the rest. When packets arrive spaced out (slower links) or in stacks without such batching
+(Zhang et al. [1] measured Chromium; LiteQUIC [2] measured nginx-quic), ACKs are frequent and a
+higher threshold should remove a larger share of their cost; we did not measure such a setting.
 
 **What should drive the threshold?** Feedback is free when the CPU is idle and costly when it is
 busy, so a CPU-driven policy that keeps RFC behaviour on an idle server and reduces ACKs only under
@@ -327,8 +298,7 @@ and the 20 MB slowdown of `fixed:100` (+33%) that motivated `+phase`.
 ## 8. Limitations and future work
 
 - **Testbed:** one client and one server; Wi-Fi throughput varies between runs, so differences
-  under ~10% in download time are not resolvable with n = 3 per cell; the wired link ran at
-  100 Mbit/s (cable) and only its no-load phase completed.
+  under ~10% in download time are not resolvable with n = 3 per cell.
 - **Workload:** single connections only. Multi-connection servers (LiteQUIC's setting) would make
   ACK processing a larger share of CPU.
 - **No network emulation** (needs root): `+net` and `+delay` were not tested on lossy,
@@ -349,9 +319,8 @@ emulated lossy/shallow-buffer paths for `+net`; a geometric instead of linear `T
 We implemented run-time ACK-frequency policies in msquic, including a CPU-driven `adaptive`
 policy and three modifiers, and measured ACK cost directly. A CPU-driven threshold gives the
 expected trade-off: RFC behaviour when the server is idle, half the ACKs and half the client's
-ACK cost under load, and no download-time penalty. Where receivers ACK often, a high threshold
-removes 80–95% of ACK handling cost, and slow-start awareness (`+phase`) avoids the small-transfer
-slowdown that otherwise comes with it. At high rates with batched ACKs, the server's remaining cost
+ACK cost under load, and no download-time penalty. Slow-start awareness (`+phase`) avoids the
+small-transfer slowdown that otherwise comes with a high threshold. At high rates with batched ACKs, the server's remaining cost
 is per acknowledged packet, which ACK frequency cannot reduce.
 
 ## References
