@@ -3,7 +3,7 @@
 #
 #   scripts/cpu-load.sh <N|Kx> <seconds>
 #     N   number of busy-loop processes
-#     Kx  K x number of cores (e.g. 1x saturates every core, 2x oversubscribes 2:1)
+#     Kx  K x number of logical CPUs (nproc; e.g. 1x saturates every CPU, 2x oversubscribes 2:1)
 #
 # Stop early with:  pkill -u "$USER" -f "[m]cn-cpu-burn"
 set -euo pipefail

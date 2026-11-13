@@ -1,0 +1,36 @@
+== 2026-11-14T02:36:42+05:30 tag=L2x_fixed-100_1GB_r1
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x6118dd476e80 recv_ns=522742622 recv_flushes=11153 ack_proc_ns=5372269 ack_proc_frames=2460 send_ns=106258203 send_flushes=4176 sent_pkts=4177 recv_pkts=530521 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T02:38:09+05:30 tag=L2x_adaptive+phase_1GB_r1
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x58d80721be80 recv_ns=183544034 recv_flushes=4552 ack_proc_ns=2022016 ack_proc_frames=1041 send_ns=39330282 send_flushes=1647 sent_pkts=1648 recv_pkts=191705 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T02:39:36+05:30 tag=L2x_adaptive+net+phase+reorder+delay_1GB_r1
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x641b40c7be80 recv_ns=385133041 recv_flushes=13080 ack_proc_ns=5424193 ack_proc_frames=3515 send_ns=132128097 send_flushes=5999 sent_pkts=6002 recv_pkts=401845 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T02:47:11+05:30 tag=L2x_adaptive_500MB_r3
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x5af1fb49be80 recv_ns=12735320 recv_flushes=307 ack_proc_ns=156933 ack_proc_frames=92 send_ns=3497193 send_flushes=179 sent_pkts=180 recv_pkts=11659 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T02:48:38+05:30 tag=L2x_fixed-100_1GB_r3
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x55a903523e80 recv_ns=36519261 recv_flushes=518 ack_proc_ns=266084 ack_proc_frames=114 send_ns=6646267 send_flushes=243 sent_pkts=244 recv_pkts=28924 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T02:50:01+05:30 tag=L2x_adaptive-255_1GB_r3
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x56e42b3ede80 recv_ns=585048222 recv_flushes=13064 ack_proc_ns=4841231 ack_proc_frames=1968 send_ns=70501886 send_flushes=2433 sent_pkts=2435 recv_pkts=607762 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T02:51:41+05:30 tag=L2x_adaptive+net+phase+reorder+delay_1GB_r3
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x626be4383e80 recv_ns=651332613 recv_flushes=15920 ack_proc_ns=7553338 ack_proc_frames=4014 send_ns=186406516 send_flushes=7789 sent_pkts=7790 recv_pkts=677087 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T02:52:04+05:30 tag=L2x_default_1GB_r3
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x5e0f76656e80 recv_ns=144771803 recv_flushes=3615 ack_proc_ns=1686063 ack_proc_frames=938 send_ns=36771470 send_flushes=1846 sent_pkts=1848 recv_pkts=162719 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T03:01:44+05:30 tag=L4x_adaptive+delay_1GB_r1
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x5692017cde80 recv_ns=198539270 recv_flushes=6108 ack_proc_ns=2477342 ack_proc_frames=1290 send_ns=75408495 send_flushes=2921 sent_pkts=2922 recv_pkts=195462 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T03:10:43+05:30 tag=L4x_adaptive+delay_1GB_r2
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x60dc29946e80 recv_ns=468548010 recv_flushes=17348 ack_proc_ns=6614795 ack_proc_frames=3990 send_ns=189812767 send_flushes=7640 sent_pkts=7642 recv_pkts=448982 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T03:14:15+05:30 tag=L4x_adaptive-255_500MB_r3
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x62e5c6670e80 recv_ns=57368635 recv_flushes=788 ack_proc_ns=267824 ack_proc_frames=108 send_ns=7603268 send_flushes=259 sent_pkts=260 recv_pkts=44016 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T03:16:58+05:30 tag=L4x_adaptive_1GB_r3
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x5aafe9028e80 recv_ns=241145988 recv_flushes=5264 ack_proc_ns=1920735 ack_proc_frames=849 send_ns=47564808 send_flushes=1785 sent_pkts=1787 recv_pkts=216940 reordered_pkts=0 ack_freq_updates=0

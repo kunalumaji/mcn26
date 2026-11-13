@@ -1,0 +1,12 @@
+== 2026-11-14T03:33:14+05:30 tag=L0.75x_adaptive-255_500MB_r1
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x5c7a8ef38ea0 recv_ns=58519572 recv_flushes=1106 ack_proc_ns=562387 ack_proc_frames=242 send_ns=10592364 send_flushes=378 sent_pkts=381 recv_pkts=58101 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T03:34:50+05:30 tag=L1x_adaptive_500MB_r2
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x5adc1d2e3ea0 recv_ns=141444653 recv_flushes=2675 ack_proc_ns=1311763 ack_proc_frames=488 send_ns=31034637 send_flushes=1195 sent_pkts=1196 recv_pkts=137987 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T03:35:13+05:30 tag=L1x_adaptive-255_500MB_r2
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x5aa1100c1ea0 recv_ns=154559483 recv_flushes=3248 ack_proc_ns=1137627 ack_proc_frames=536 send_ns=19242161 send_flushes=820 sent_pkts=821 recv_pkts=160127 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T03:37:23+05:30 tag=L4x_adaptive_500MB_r1
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x5f1f1e925ea0 recv_ns=276567797 recv_flushes=8784 ack_proc_ns=2622120 ack_proc_frames=1227 send_ns=48995541 send_flushes=2309 sent_pkts=2310 recv_pkts=288989 reordered_pkts=0 ack_freq_updates=0

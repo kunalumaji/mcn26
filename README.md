@@ -96,9 +96,10 @@ Kernel time in the UDP system calls is not included (it runs in msquic's datapat
 
 ### How the server CPU load is generated
 
-`scripts/cpu-load.sh Kx` starts `K` busy-loop processes (`while :; do :; done`) per server core,
-at normal priority and without root: `2x` on the 28-core server is 56 processes, `4x` is 112.
-They stand in for the server's other work, such as other connections and the application.
+`scripts/cpu-load.sh Kx` starts `K` busy-loop processes (`while :; do :; done`) per logical CPU
+of the server, at normal priority and without root: `2x` on our 16-CPU server is 32 processes,
+`4x` is 64. They stand in for the server's other work, such as other connections and the
+application.
 
 **Where the busy loops run matters.** Linux groups processes by session ("autogroup", enabled
 by default on Ubuntu: `/proc/sys/kernel/sched_autogroup_enabled`) and shares CPU time fairly
@@ -109,33 +110,51 @@ between groups first, then between the threads inside a group.
   load only made the server *look* busy, so download speed never changed.
 - **Since Nov 14 (`LOAD_SCOPE=shared`, the default)** the runner starts the busy loops and all
   servers in **one** session (`scripts/server-session.sh`). Each busy loop now competes
-  one-to-one with the QUIC threads: at `2x` a QUIC thread gets about a third of a core, at `4x`
-  about a fifth. This models a server whose own work competes with ACK processing.
+  one-to-one with the QUIC threads: the worker thread's CPU demand rises from 12% (no load) to
+  94% (2x) and 90% (4x), and at 4x the goodput of every policy drops (e.g. `fixed:2`: ~600 →
+  ~400 Mbit/s). This models a server whose own work competes with ACK processing.
 
 ## Results
 
-Main run: [`results/20261112-012708`](results/20261112-012708) (Wi-Fi, ~600 Mbit/s, 264 downloads
-of 20 MB–1 GB, 11 policy variants, idle server and fully loaded server).
-Details and discussion: [docs/report.md](docs/report.md).
+Three experiments (Nov 14), client on Wi-Fi (~600 Mbit/s), server AMD Ryzen 7 5800X (16 logical
+CPUs) with 0, 2 or 4 competing busy loops per CPU:
 
-1. **`adaptive` does what it is designed to do.** Idle server: `T = 2` (RFC behaviour, full
-   feedback). Fully loaded server: `T` ≈ 91, **51% fewer ACKs** and **48% less client
-   ACK-generation time** than `fixed:2`, with **no download-time penalty** (0.98× `fixed:2`).
-2. **`+phase` removes the cost of a high threshold for small transfers.** `fixed:100` made 20 MB
-   downloads ~35% slower (0.37 s vs 0.27 s); `fixed:100+phase` took 0.26–0.27 s while keeping
-   almost all of the ACK savings.
-3. **At high rates msquic already batches ACKs** (~56 data packets per ACK even at `T = 2`), so the
-   server's remaining cost is per acknowledged packet and changed by at most −12%.
-4. **LiteQUIC's rule misreads Wi-Fi:** it raised `T` to ~59 on an *idle* server and sent ~70
-   `ACK_FREQUENCY` frames per second.
-5. **`+reorder` had nothing to act on** (no reordered packet in 261 downloads); `+delay` and `+net`
-   make `adaptive` more conservative (more ACKs) with no measurable download-time change here.
-6. **CPU frequency matters for measurement:** the server ran at 822 MHz idle vs 2715 MHz loaded,
-   which changes per-MB costs by ~45%; compare costs only within a load level.
+| Experiment | Result folder | Runs |
+|---|---|---|
+| 1. File downloads, 12 policy variants, 20 MB–1 GB | [`20261114-021601`](results/20261114-021601) | 432 (420 completed) |
+| 2. Load sweep, 4 policies, load 0 → 4x | [`20261114-032917`](results/20261114-032917) | 56 (52 completed) |
+| 3. Video streaming, 8 policies | [`20261114-033839`](results/20261114-033839) | 72 (64 completed) |
 
-| ![Threshold over time](results/20261112-012708/figures/threshold_timeline.png) | ![ACKs per MB](results/20261112-012708/figures/acks_per_mb.png) |
+Details, tables and discussion: [docs/report.md](docs/report.md).
+
+1. **`adaptive` follows the CPU load.** Idle server: `T = 2` (RFC behaviour). `T` rises with the
+   machine's utilisation (10 at 0.5x, 69 at 0.75x load) and reaches its ceiling of 100 when the
+   machine is fully busy (1x and more).
+2. **Under load it removes half to two thirds of the ACKs:** 52–67% fewer than `fixed:2`, with
+   32–57% less client ACK-generation time and 10–33% less server ACK-processing time.
+3. **At 2x load this costs nothing:** goodput 588 vs 582 Mbit/s (`fixed:2`), download time 1.03×,
+   and the best video QoE (top bitrate, no rebuffering).
+4. **The ceiling matters.** msquic allows at most 255. `adaptive:255` cut ACKs further (−72 to −84%)
+   but caused the most throughput collapses and stalls on a CPU-starved server and 9% longer
+   downloads at 2x. 100 is a reasonable fixed ceiling; better is a quarter of the congestion window
+   (`+net`).
+5. **A starved server needs timely feedback.** At 4x load, variants with an RTT-scaled ACK timer
+   (`+delay`) or the window-based ceiling (`+net`) kept `fixed:2`'s goodput and video QoE with ~40%
+   fewer ACKs and had no throughput collapses; thresholds of 100+ with msquic's 25 ms timer
+   occasionally collapsed for seconds.
+6. **`+phase` removes the small-transfer penalty of a high threshold** (20 MB: 0.28 s vs 0.39 s
+   with `fixed:100`), also for video segments (startup 0.12 s vs 0.19 s).
+7. **msquic already batches ACKs at high rates** (~50 data packets per ACK at `T = 2`), so the
+   server's remaining ACK cost is mostly per acknowledged packet.
+8. **LiteQUIC's rule misreads Wi-Fi:** it raised `T` on an *idle* server (mean 66) and changed it
+   36–61 times per second.
+9. **Open issues:** 4.3% of runs stalled (no packet in either direction for 16 s), almost all
+   under load and with every kind of policy; the cause is unknown. `+reorder` saw no reordered
+   packet in 472 downloads.
+
+| ![Threshold over time](results/20261114-021601/figures/threshold_timeline.png) | ![Load sweep](results/20261114-032917/figures/load_sweep.png) |
 |---|---|
-| ![Client ACK cost](results/20261112-012708/figures/client_ack_cost.png) | ![Download time](results/20261112-012708/figures/download_time.png) |
+| ![Goodput](results/20261114-021601/figures/goodput.png) | ![Video QoE](results/20261114-033839/figures/video_qoe.png) |
 
 ## Repository layout
 
@@ -145,7 +164,7 @@ Details and discussion: [docs/report.md](docs/report.md).
 | `apps/quicfile/` | Download and video-streaming client/server used in all experiments |
 | `scripts/setup.sh` | Builds msquic, `secnetperf` and `quicfile` |
 | `scripts/make-testdata.sh` | Creates the test files (20 MB, 100 MB, 500 MB, 1 GB, video segments at 10–400 Mbit/s; random data) and a TLS certificate |
-| `scripts/cpu-load.sh` | CPU load: `N` or `Kx` (K per core) busy-loop processes |
+| `scripts/cpu-load.sh` | CPU load: `N` or `Kx` (K per logical CPU) busy-loop processes |
 | `scripts/server-session.sh` | Runs all servers of a run and the CPU load in one session, so the load competes with the QUIC threads (see [Server CPU load](#how-the-server-cpu-load-is-generated)) |
 | `scripts/cpumon.py` | Logs machine and `quicfile` CPU every 200 ms |
 | `experiments/run_quicfile.sh` | The evaluation runner (run on the client) |
@@ -158,7 +177,7 @@ Details and discussion: [docs/report.md](docs/report.md).
 
 ## Reproducing the results
 
-You need two Linux machines (we used Ubuntu 24.04): a **server** that serves the files and a
+You need two Linux machines (we used Ubuntu 22.04 on the server and 24.04 on the client): a **server** that serves the files and a
 **client** that downloads them. Everything is started on the client, which controls the
 server over SSH.
 
@@ -228,7 +247,7 @@ python3 analysis/summarize.py results/<timestamp>   # the report's tables (markd
 | `FILES` | `20MB.bin 100MB.bin 500MB.bin 1GB.bin` | Files to download (from the server's `data/files/`) |
 | `VIDEO_OPTS` | `-ladder:25,50,100,200,300,400 -segments:20 -segdur:2 -bufmax:10` | Video settings: bitrates (Mbit/s), segment count, segment length (s), buffer size (s) |
 | `POLICIES` | the 12 specs of experiment 1 | `default`, `fixed:N`, `litequic`, `adaptive[:N]`, each optionally `+net`, `+phase`, `+reorder`, `+delay` |
-| `SERVER_LOADS` | `0 2x 4x` | Server CPU load levels: `0` none, `N` busy loops, `Kx` K per core |
+| `SERVER_LOADS` | `0 2x 4x` | Server CPU load levels: `0` none, `N` busy loops, `Kx` K per logical CPU |
 | `LOAD_SCOPE` | `shared` | `shared`: load competes with the QUIC threads; `separate`: the pre-Nov-14 behaviour ([why](#how-the-server-cpu-load-is-generated)) |
 | `CLIENT_LOAD` | `0` | CPU load on the client during all runs |
 | `REPS` | `3` | Repetitions per (load, file, policy) |

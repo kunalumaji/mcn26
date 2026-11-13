@@ -1,0 +1,8 @@
+date=2026-11-14T02:16:01+05:30
+server=sense-student@10.21.237.7 cc=cubic reps=3 workload=files
+files=20MB.bin 100MB.bin 500MB.bin 1GB.bin
+policies=default fixed:2 fixed:100 fixed:100+phase litequic adaptive adaptive:255 adaptive+phase adaptive+reorder adaptive+delay adaptive+phase+reorder+delay adaptive+net+phase+reorder+delay
+server_loads=0 2x 4x load_scope=shared client_load=0
+client_commit=6daabb6 client_dirty=0 server_commit=6daabb6 server_dirty=0
+client_host=kunal-750XGK client_cores=12 client_kernel=7.0.0-42-generic
+server_host=sense-student server_cores=16 server_kernel=6.8.0-138-generic

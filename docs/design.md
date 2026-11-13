@@ -86,6 +86,11 @@ The default 100 (`MCN_ACK_MAX`) is LiteQUIC's largest tested value, not a tuned 
 `adaptive:N` (runner) / `-ackmax:N` (quicfile) sets it; the evaluation compares 100 with 255
 and with the window-based ceiling of `+net`.
 
+Outcome (report §6.3–6.4): 255 removed more ACKs but caused the most throughput collapses and
+stalls on a CPU-starved server; variants with a short ACK timer (`+delay`, SRTT/4) or the window
+ceiling (`+net`) kept `fixed:2`'s throughput. Keep a ceiling of about 100 or `cwnd/4`, and pair a
+large threshold with an RTT-scaled max ACK delay.
+
 ## Modifiers: `+phase`, `+reorder`, `+delay`
 
 Chosen from a brainstorm of further signals (see "Deferred ideas" below) because each

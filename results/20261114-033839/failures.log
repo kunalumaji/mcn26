@@ -1,0 +1,24 @@
+== 2026-11-14T03:48:59+05:30 tag=L0_litequic_video_r3
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x605f294efea0 recv_ns=444971642 recv_flushes=10839 ack_proc_ns=5781581 ack_proc_frames=2717 send_ns=101102586 send_flushes=5650 sent_pkts=5653 recv_pkts=545724 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T03:52:37+05:30 tag=L2x_fixed-2_video_r1
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x5995ae5b4ea0 recv_ns=1103326348 recv_flushes=25211 ack_proc_ns=15719473 ack_proc_frames=7429 send_ns=401512140 send_flushes=23116 sent_pkts=23117 recv_pkts=1269372 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T03:55:56+05:30 tag=L2x_adaptive-255_video_r1
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x59861d8f9ea0 recv_ns=682820150 recv_flushes=16710 ack_proc_ns=6161571 ack_proc_frames=2256 send_ns=78665103 send_flushes=2778 sent_pkts=2780 recv_pkts=689127 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T03:56:35+05:30 tag=L2x_adaptive+phase+reorder+delay_video_r1
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x63dec3456ea0 recv_ns=742757529 recv_flushes=17637 ack_proc_ns=9988526 ack_proc_frames=4506 send_ns=228611504 send_flushes=9623 sent_pkts=9625 recv_pkts=786145 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T04:01:43+05:30 tag=L2x_fixed-100_video_r3
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x5a5c28f9dea0 recv_ns=952541719 recv_flushes=22098 ack_proc_ns=11593223 ack_proc_frames=5181 send_ns=183943525 send_flushes=7961 sent_pkts=7962 recv_pkts=1022585 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T04:04:31+05:30 tag=L2x_adaptive+phase+reorder+delay_video_r3
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x5c96d1174ea0 recv_ns=732470065 recv_flushes=22017 ack_proc_ns=8553164 ack_proc_frames=4886 send_ns=211906779 send_flushes=9698 sent_pkts=9699 recv_pkts=815997 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T04:09:55+05:30 tag=L4x_adaptive+phase+reorder+delay_video_r1
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x5e79492c7ea0 recv_ns=154928859 recv_flushes=3122 ack_proc_ns=1851369 ack_proc_frames=422 send_ns=40880594 send_flushes=1672 sent_pkts=1673 recv_pkts=133885 reordered_pkts=0 ack_freq_updates=0
+== 2026-11-14T04:12:18+05:30 tag=L4x_litequic_video_r2
+Connection shut down by transport, 0x6e
+[mcn-stats] conn=0x5978fcfd2ea0 recv_ns=772726927 recv_flushes=24267 ack_proc_ns=7551769 ack_proc_frames=3979 send_ns=151391329 send_flushes=7435 sent_pkts=7436 recv_pkts=852871 reordered_pkts=0 ack_freq_updates=0

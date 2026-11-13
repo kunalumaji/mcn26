@@ -46,7 +46,7 @@ def load_name(load):
     if load == "0":
         return "no server load"
     if load.endswith("x"):
-        return f"server load {load} ({load[:-1]} busy loops per core)"
+        return f"server load {load} ({load[:-1]} busy loops per CPU)"
     return f"server load {load} busy loops"
 
 plt.rcParams.update({
@@ -129,13 +129,13 @@ def bar_panels(rows, order, loads, metric, xlabel, title, path):
         ax.set_xlabel(xlabel)
         ax.grid(axis="y", visible=False)
         ax.set_yticks(range(len(order)), order)
-        ax.invert_yaxis()
+    axes[0][0].invert_yaxis()  # shared y axis: invert once (first policy on top)
     handles = [plt.Rectangle((0, 0), 1, 1, color=BASELINE), plt.Rectangle((0, 0), 1, 1, color=OURS),
                plt.Line2D([0], [0], color=TEXT, linewidth=1.2)]
     fig.legend(handles, ["baseline policy", "our policy / modifiers", "interquartile range"],
                loc="lower center", ncol=3, frameon=False, bbox_to_anchor=(0.5, -0.01))
     fig.suptitle(title, x=0.01, ha="left", fontsize=12, fontweight="bold")
-    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    fig.tight_layout(rect=(0, 0.06, 1, 0.97))
     fig.savefig(path, dpi=150)
     plt.close(fig)
 
@@ -168,16 +168,16 @@ def download_time(rows, order, loads, path):
             ax.set_title(f"{file.replace('.bin', '')}, {load_name(load)}", loc="left", fontsize=10)
             ax.grid(axis="y", visible=False)
             ax.set_yticks(range(len(order)), order)
-            ax.invert_yaxis()
             if i == len(loads) - 1:
                 ax.set_xlabel("download time / fixed:2 (lower is faster)")
+    axes[0][0].invert_yaxis()  # shared y axis: invert once (first policy on top)
     fig.suptitle("Download time relative to fixed:2 (median, interquartile range)",
                  x=0.01, ha="left", fontsize=12, fontweight="bold")
     handles = [plt.Line2D([0], [0], marker="o", color=BASELINE, linewidth=2),
                plt.Line2D([0], [0], marker="o", color=OURS, linewidth=2)]
     fig.legend(handles, ["baseline policy", "our policy / modifiers"], loc="lower center", ncol=2,
                frameon=False, bbox_to_anchor=(0.5, -0.005))
-    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    fig.tight_layout(rect=(0, 0.04, 1, 0.97))
     fig.savefig(path, dpi=150)
     plt.close(fig)
 
@@ -291,7 +291,7 @@ def throughput_timeline(out, loads, files, path):
 def load_sweep(rows, loads, path):
     """Mean threshold and goodput vs server load, one line per policy (<= 4 policies)."""
     specs = list(dict.fromkeys(r["spec"] for r in rows))[:4]
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.4))
     for color, spec in zip(SLOTS, specs):
         for ax, metric in zip(axes, ["threshold_mean", "goodput_mbps"]):
             ys = []
@@ -303,23 +303,31 @@ def load_sweep(rows, loads, path):
                     markeredgecolor=SURFACE, markeredgewidth=1.5, label=spec)
             ax.annotate(spec, (len(loads) - 1, ys[-1]), xytext=(6, 0), textcoords="offset points",
                         va="center", fontsize=9, color=TEXT)
-    for ax, label in zip(axes, ["mean ACK threshold T", "goodput (Mbit/s)"]):
-        ax.set_xticks(range(len(loads)), ["none" if l == "0" else l for l in loads])
-        ax.set_xlabel("server load (busy loops per core)")
+    for ax, label in zip(axes, ["mean ACK threshold T", "goodput (Mbit/s), 500 MB downloads"]):
+        ax.set_xticks(range(len(loads)), loads)
+        ax.set_xlabel("server load (busy loops per logical CPU)")
         ax.set_ylabel(label)
         ax.set_xlim(-0.3, len(loads) - 0.3 + 1.2)
     axes[0].set_ylim(0, 270)
     axes[1].set_ylim(bottom=0)
     axes[0].set_title("Threshold follows CPU load", loc="left")
     axes[1].set_title("Goodput", loc="left")
-    fig.legend(frameon=False, loc="lower center", ncol=len(specs), bbox_to_anchor=(0.5, -0.01))
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, frameon=False, loc="lower center", ncol=len(specs),
+               bbox_to_anchor=(0.5, -0.01))
     fig.tight_layout(rect=(0, 0.07, 1, 1))
     fig.savefig(path, dpi=150)
     plt.close(fig)
 
 
 def bar_grid(rows, order, loads, metrics, title, path):
-    """Rows of panels (one per metric) x columns (one per load): horizontal bars per policy."""
+    """Rows of panels (one per metric) x columns (one per load): horizontal bars per policy.
+    Metrics that are zero in every run are left out and named in the title instead."""
+    zero = [label for metric, label in metrics
+            if all((num(r[metric]) or 0) == 0 for r in rows)]
+    metrics = [(m, label) for m, label in metrics if label not in zero]
+    if zero:
+        title += " — zero in every session: " + ", ".join(zero)
     fig, axes = plt.subplots(len(metrics), len(loads),
                              figsize=(4.6 * len(loads), (0.3 * len(order) + 1.1) * len(metrics) + 0.8),
                              sharey=True, squeeze=False)
@@ -340,13 +348,13 @@ def bar_grid(rows, order, loads, metrics, title, path):
             ax.set_xlabel(label)
             ax.grid(axis="y", visible=False)
             ax.set_yticks(range(len(order)), order)
-            ax.invert_yaxis()
+    axes[0][0].invert_yaxis()  # shared y axis: invert once (first policy on top)
     handles = [plt.Rectangle((0, 0), 1, 1, color=BASELINE), plt.Rectangle((0, 0), 1, 1, color=OURS),
                plt.Line2D([0], [0], color=TEXT, linewidth=1.2)]
     fig.legend(handles, ["baseline policy", "our policy / modifiers", "interquartile range"],
                loc="lower center", ncol=3, frameon=False, bbox_to_anchor=(0.5, -0.005))
     fig.suptitle(title, x=0.01, ha="left", fontsize=12, fontweight="bold")
-    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    fig.tight_layout(rect=(0, 0.03, 1, 0.97))
     fig.savefig(path, dpi=150)
     plt.close(fig)
 

@@ -1,0 +1,8 @@
+date=2026-11-14T03:38:39+05:30
+server=sense-student@10.21.237.7 cc=cubic reps=3 workload=video
+video_opts=-ladder:25,50,100,200,300,400 -segments:20 -segdur:2 -bufmax:10
+policies=fixed:2 default fixed:100 fixed:100+phase litequic adaptive adaptive:255 adaptive+phase+reorder+delay
+server_loads=0 2x 4x load_scope=shared client_load=0
+client_commit=4076256 client_dirty=0 server_commit=4076256 server_dirty=0
+client_host=kunal-750XGK client_cores=12 client_kernel=7.0.0-42-generic
+server_host=sense-student server_cores=16 server_kernel=6.8.0-138-generic

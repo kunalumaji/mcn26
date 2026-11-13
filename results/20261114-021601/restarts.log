@@ -1,0 +1,12 @@
+2026-11-14T02:36:46+05:30 restarted server spec=fixed:100 after tag=L2x_fixed-100_1GB_r1
+2026-11-14T02:38:12+05:30 restarted server spec=adaptive+phase after tag=L2x_adaptive+phase_1GB_r1
+2026-11-14T02:39:39+05:30 restarted server spec=adaptive+net+phase+reorder+delay after tag=L2x_adaptive+net+phase+reorder+delay_1GB_r1
+2026-11-14T02:47:14+05:30 restarted server spec=adaptive after tag=L2x_adaptive_500MB_r3
+2026-11-14T02:48:42+05:30 restarted server spec=fixed:100 after tag=L2x_fixed-100_1GB_r3
+2026-11-14T02:50:04+05:30 restarted server spec=adaptive:255 after tag=L2x_adaptive-255_1GB_r3
+2026-11-14T02:51:44+05:30 restarted server spec=adaptive+net+phase+reorder+delay after tag=L2x_adaptive+net+phase+reorder+delay_1GB_r3
+2026-11-14T02:52:08+05:30 restarted server spec=default after tag=L2x_default_1GB_r3
+2026-11-14T03:01:48+05:30 restarted server spec=adaptive+delay after tag=L4x_adaptive+delay_1GB_r1
+2026-11-14T03:10:47+05:30 restarted server spec=adaptive+delay after tag=L4x_adaptive+delay_1GB_r2
+2026-11-14T03:14:19+05:30 restarted server spec=adaptive:255 after tag=L4x_adaptive-255_500MB_r3
+2026-11-14T03:17:02+05:30 restarted server spec=adaptive after tag=L4x_adaptive_1GB_r3

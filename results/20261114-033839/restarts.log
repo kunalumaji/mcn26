@@ -1,0 +1,8 @@
+2026-11-14T03:49:02+05:30 restarted server spec=litequic after tag=L0_litequic_video_r3
+2026-11-14T03:52:41+05:30 restarted server spec=fixed:2 after tag=L2x_fixed-2_video_r1
+2026-11-14T03:56:00+05:30 restarted server spec=adaptive:255 after tag=L2x_adaptive-255_video_r1
+2026-11-14T03:56:39+05:30 restarted server spec=adaptive+phase+reorder+delay after tag=L2x_adaptive+phase+reorder+delay_video_r1
+2026-11-14T04:01:46+05:30 restarted server spec=fixed:100 after tag=L2x_fixed-100_video_r3
+2026-11-14T04:04:34+05:30 restarted server spec=adaptive+phase+reorder+delay after tag=L2x_adaptive+phase+reorder+delay_video_r3
+2026-11-14T04:09:59+05:30 restarted server spec=adaptive+phase+reorder+delay after tag=L4x_adaptive+phase+reorder+delay_video_r1
+2026-11-14T04:12:21+05:30 restarted server spec=litequic after tag=L4x_litequic_video_r2
