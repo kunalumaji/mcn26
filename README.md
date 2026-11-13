@@ -167,7 +167,7 @@ server over SSH.
 - CMake ≥ 3.16, GCC, Ninja, `libssl-dev`, `libnuma-dev`, `openssl`, Python 3.
   `INSTALL_DEPS=1 scripts/setup.sh` installs them with apt (needs sudo).
 - `matplotlib` on the client for the figures (`pip install matplotlib`).
-- Disk: about 250 MB for sources and build; 1.6 GB for the test files on the server.
+- Disk: about 250 MB for sources and build; 2 GB for the test files on the server.
 - No root access is needed on either machine.
 
 ### 2. Set up both machines (same commit on both)
@@ -196,22 +196,27 @@ ssh <user>@<server> 'cd ~/Documents/mcn26 && git merge --ff-only from-client && 
 
 ### 3. Run the evaluation (on the client)
 
-The exact command for the main results (`results/20261112-012708`):
+All experiments of the report, with figures and tables (about 2–3 hours over ~600 Mbit/s Wi-Fi):
 
 ```bash
-SERVER=<user>@<server-ip> FILES="20MB.bin 100MB.bin 500MB.bin 1GB.bin" REPS=3 SERVER_LOADS="0 2x" \
-    experiments/run_quicfile.sh
-python3 analysis/plot.py results/<timestamp>        # figures into results/<timestamp>/figures/
-python3 analysis/summarize.py results/<timestamp>   # the report's tables (markdown)
+SERVER=<user>@<server-ip> experiments/run_all.sh
 ```
 
-It downloads every file with all 11 policy variants, 3 times, with no server load and with 2
-busy-loop processes per server core: 264 downloads, 33 minutes over ~600 Mbit/s Wi-Fi (the runtime
-scales with link speed). At the end it prints a summary table and writes `results/<timestamp>/`.
-A 1-minute check of the pipeline:
+It runs three experiments, each into its own `results/<timestamp>/`:
+
+| # | Experiment | Settings (see [`experiments/run_all.sh`](experiments/run_all.sh)) |
+|---|---|---|
+| 1 | File downloads | 12 policy variants × 4 files (20 MB–1 GB) × server load `0`, `2x`, `4x` × 3 repetitions = 432 downloads |
+| 2 | Load sweep | 500 MB, 4 policies, server load `0` to `4x` in 7 steps, 2 repetitions |
+| 3 | Video streaming | 8 policies × server load `0`, `2x`, `4x` × 3 repetitions; 40 s of video in 2 s segments, bitrates 25–400 Mbit/s |
+
+Each experiment is one call of `experiments/run_quicfile.sh`, configured by environment
+variables. For example, a 1-minute check of the pipeline:
 
 ```bash
-FILES=20MB.bin REPS=1 POLICIES="fixed:2 fixed:100 adaptive" experiments/run_quicfile.sh
+FILES=20MB.bin REPS=1 SERVER_LOADS=0 POLICIES="fixed:2 fixed:100 adaptive" experiments/run_quicfile.sh
+python3 analysis/plot.py results/<timestamp>        # figures into results/<timestamp>/figures/
+python3 analysis/summarize.py results/<timestamp>   # the report's tables (markdown)
 ```
 
 | Variable | Default | Meaning |
@@ -219,9 +224,12 @@ FILES=20MB.bin REPS=1 POLICIES="fixed:2 fixed:100 adaptive" experiments/run_quic
 | `SERVER` | `kunal@10.21.232.3` | SSH target of the server |
 | `SERVER_IP` | host part of `SERVER` | Address the client downloads from |
 | `SERVER_ROOT` | `Documents/mcn26` | Repo path on the server, relative to its home |
+| `WORKLOAD` | `files` | `files`: download each of `FILES`; `video`: one video session per run |
 | `FILES` | `20MB.bin 100MB.bin 500MB.bin 1GB.bin` | Files to download (from the server's `data/files/`) |
-| `POLICIES` | the 11 specs of the final run | `default`, `fixed:N`, `litequic`, `adaptive`, each optionally `+net`, `+phase`, `+reorder`, `+delay` |
-| `SERVER_LOADS` | `0 2x` | Server CPU load levels: `0` none, `N` busy loops, `Kx` K per core |
+| `VIDEO_OPTS` | `-ladder:25,50,100,200,300,400 -segments:20 -segdur:2 -bufmax:10` | Video settings: bitrates (Mbit/s), segment count, segment length (s), buffer size (s) |
+| `POLICIES` | the 12 specs of experiment 1 | `default`, `fixed:N`, `litequic`, `adaptive[:N]`, each optionally `+net`, `+phase`, `+reorder`, `+delay` |
+| `SERVER_LOADS` | `0 2x 4x` | Server CPU load levels: `0` none, `N` busy loops, `Kx` K per core |
+| `LOAD_SCOPE` | `shared` | `shared`: load competes with the QUIC threads; `separate`: the pre-Nov-14 behaviour ([why](#how-the-server-cpu-load-is-generated)) |
 | `CLIENT_LOAD` | `0` | CPU load on the client during all runs |
 | `REPS` | `3` | Repetitions per (load, file, policy) |
 | `CC` | `cubic` | Congestion control: `cubic` or `bbr` |
@@ -230,9 +238,9 @@ FILES=20MB.bin REPS=1 POLICIES="fixed:2 fixed:100 adaptive" experiments/run_quic
 What the runner does:
 - **Refuses to start** unless client and server are on the same commit with no uncommitted
   changes, so every result comes from identical code (`meta.txt` records both commits).
-- Starts **one server per policy**, each on its own port, and **interleaves** downloads across
-  policies, rotating the order every repetition, so slow changes in the network affect all
-  policies equally.
+- Starts **one server per policy**, each on its own port, together with the CPU load in one
+  session per load level, and **interleaves** runs across policies, rotating the order every
+  repetition, so slow changes in the network affect all policies equally.
 - Logs CPU on both machines every 200 ms (`scripts/cpumon.py`).
 - If a download fails, saves the client's output in `failures.log` and restarts that policy's
   server (`restarts.log`).
@@ -242,27 +250,43 @@ What the runner does:
 | File | Contents |
 |---|---|
 | `meta.txt` | Settings, commits, hosts, kernels |
-| `runs.csv` | **One row per download**: `download_s` (connection start to last byte), `goodput_mbps`, `data_pkts_per_ack`, `server_recv_ack_frames`, `server_recv_us_per_mb`, `server_ack_proc_us_per_mb`, `client_send_us_per_mb`, process CPU per MB, machine CPU %, losses, reordered packets, RTT, mean threshold `T` |
+| `runs.csv` | **One row per download**: `download_s` (connection start to last byte), `goodput_mbps` (bytes / transfer time), `tput_p10/p50/p90_mbps` (percentiles of the throughput in 100 ms intervals), `data_pkts_per_ack`, `server_recv_ack_frames`, `server_recv_us_per_mb`, `server_ack_proc_us_per_mb`, `client_send_us_per_mb`, process CPU per MB, machine CPU %, losses, reordered packets, RTT, mean threshold `T` |
+| `videos.csv` | **One row per video session** (`WORKLOAD=video`): `avg_bitrate_mbps`, `startup_ms`, `rebuffer_events`, `rebuffer_ms`, `switches`, `qoe`, segment throughput, plus the same ACK and CPU columns as `runs.csv` |
 | `summary.csv` | Medians per (server load, policy, file) |
 | `ack_decisions.csv` | Every threshold decision over time with the policy's inputs |
+| `tput.log` | Throughput in every 100 ms of every download (`TPUT` lines) |
+| `segments.log` | One line per video segment: bitrate, download time, throughput, buffer level, stall (`SEG` lines) |
 | `cpu_client.csv`, `cpu_server.csv` | CPU time series of both machines |
-| `client.log`, `server.log` | Raw output (`RESULT`, `SERVER`, `[mcn]`, `[mcn-stats]` lines) |
-| `figures/` | Plots from `analysis/plot.py` |
+| `client.log`, `server.log` | Raw output (`RESULT`/`VIDEO`, `SERVER`, `[mcn]`, `[mcn-stats]` lines) |
+| `figures/`, `tables.md` | Plots from `analysis/plot.py`, tables from `analysis/summarize.py` |
 
-### 5. A single download by hand
+### 5. A single download or video session by hand
 
 ```bash
 # server
 build/msquic/bin/Release/quicfile server -dir:data/files -cert:data/cert.pem -key:data/key.pem \
     -policy:adaptive -ackphase:1 -ackreorder:3 -ackdelay:1 -acklog:1
-# client
+# client: download
 build/msquic/bin/Release/quicfile client -target:<server-ip> -file:100MB.bin -acklog:1
+# client: video session
+build/msquic/bin/Release/quicfile client -target:<server-ip> -video:1 \
+    -ladder:25,50,100,200,300,400 -segments:20 -segdur:2 -bufmax:10
 ```
 
 Options: `-policy:default|fixed|litequic|adaptive`, `-threshold:N` (fixed), `-acknet:1`,
-`-ackmax:N`, `-ackphase:1`, `-ackreorder:N`, `-ackdelay:1`, `-cc:cubic|bbr`, `-port:N`,
-`-out:<path>` (client: save the file), `-tag:<id>`. The client prints a `RESULT` line, the server
-a `SERVER` line per connection; `-acklog:1` adds `[mcn]` decisions and `[mcn-stats]`.
+`-ackmax:N` (adaptive's ceiling, ≤ 255), `-ackphase:1`, `-ackreorder:N`, `-ackdelay:1`,
+`-cc:cubic|bbr`, `-port:N`, `-out:<path>` (client: save the file), `-tag:<id>`. The client prints
+a `RESULT` and a `TPUT` line per download, or a `SEG` line per segment and a `VIDEO` line per
+video session; the server prints a `SERVER` line per connection; `-acklog:1` adds `[mcn]`
+decisions and `[mcn-stats]`.
+
+**Video client.** One QUIC connection, one stream per 2 s segment (`video_<rate>M.bin`, created
+by `make-testdata.sh`). Bitrate choice (throughput rule): the highest bitrate ≤ 0.9 × the
+harmonic mean throughput of the last 3 segments, starting at the lowest. Playback starts when the
+first segment has arrived; the client waits while the buffer holds more than `bufmax − segdur`
+seconds. Reported: startup delay, rebuffering events and time, average bitrate, number and size
+of bitrate switches, and the linear QoE of Yin et al. (SIGCOMM'15) per segment:
+`(Σ bitrate − Σ |bitrate change| − top bitrate × (rebuffer s + startup s)) / segments`.
 
 ### Troubleshooting
 
