@@ -1,0 +1,5 @@
+# LaTeX build files (released PDFs are kept in docs/, e.g. docs/Report-v1.4.pdf)
+*.aux
+*.log
+*.out
+report.pdf
