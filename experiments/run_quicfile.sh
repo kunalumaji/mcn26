@@ -21,6 +21,9 @@
 #   LOAD_SCOPE     shared: the busy loops run in the servers' session and compete with the
 #                  QUIC threads (see scripts/server-session.sh) | separate: in their own
 #                  session, which only makes the machine look busy (runs before Nov 14)  [shared]
+#   NETEM_PROFILES emulated path on the server's egress, one level per entry, run inside
+#                  every load level: none | <rate>:<delay>:<loss%>, e.g. 100mbit:10ms:0.1
+#                  (scripts/netem.sh; needs a sudo rule for tc on the server)  [none]
 #   CLIENT_LOAD    client CPU load during all runs (same format)  [0]
 #   REPS           repetitions per (load, file, policy)  [3]
 #   CC             cubic | bbr  [cubic]
@@ -41,6 +44,7 @@ VIDEO_OPTS="${VIDEO_OPTS:--ladder:25,50,100,200,300,400 -segments:20 -segdur:2 -
 POLICIES="${POLICIES:-default fixed:2 fixed:100 fixed:100+phase litequic adaptive adaptive:255 adaptive+phase adaptive+reorder adaptive+delay adaptive+phase+reorder+delay adaptive+net+phase+reorder+delay}"
 SERVER_LOADS="${SERVER_LOADS:-0 2x 4x}"
 LOAD_SCOPE="${LOAD_SCOPE:-shared}"
+NETEM_PROFILES="${NETEM_PROFILES:-none}"
 CLIENT_LOAD="${CLIENT_LOAD:-0}"
 REPS="${REPS:-3}"
 CC="${CC:-cubic}"
@@ -103,6 +107,19 @@ for spec in $POLICIES; do
     spec_options "$spec" > /dev/null || exit 1
 done
 
+# Path emulation (tc netem on the server's egress towards this client).
+NETEM=0
+[[ "$NETEM_PROFILES" != none ]] && NETEM=1
+CLIENT_IP=$(ip -o route get "$SERVER_IP" | sed -n 's/.* src \([^ ]*\).*/\1/p')
+set_netem() {
+    remote "cd $SERVER_ROOT && NETEM_PEER=$CLIENT_IP scripts/netem.sh profile $1 > /dev/null && \
+        NETEM_PEER=$CLIENT_IP scripts/netem.sh show"
+}
+if [[ "$NETEM" == 1 ]]; then
+    remote "sudo -n /usr/sbin/tc qdisc show > /dev/null" ||
+        { echo "NETEM_PROFILES needs passwordless sudo for /usr/sbin/tc on $SERVER" >&2; exit 1; }
+fi
+
 OUT="$ROOT/results/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$OUT"
 {
@@ -111,6 +128,11 @@ mkdir -p "$OUT"
     if [[ "$WORKLOAD" == video ]]; then echo "video_opts=$VIDEO_OPTS"; else echo "files=$FILES"; fi
     echo "policies=$POLICIES"
     echo "server_loads=$SERVER_LOADS load_scope=$LOAD_SCOPE client_load=$CLIENT_LOAD"
+    if [[ "$NETEM" == 1 ]]; then
+        echo "netem_profiles=$NETEM_PROFILES"
+        echo "netem_link=$(remote "dev=\$(ip -o route get $CLIENT_IP | sed -n 's/.* dev \([^ ]*\).*/\1/p'); \
+            echo \$dev \$(cat /sys/class/net/\$dev/speed) Mbit/s")"
+    fi
     echo "client_commit=$CLIENT_COMMIT client_dirty=$CLIENT_DIRTY server_commit=$SERVER_COMMIT server_dirty=$SERVER_DIRTY"
     echo "client_host=$(hostname) client_cores=$(nproc) client_kernel=$(uname -r)"
     echo "server_host=$(remote 'echo $(hostname) server_cores=$(nproc) server_kernel=$(uname -r)')"
@@ -152,6 +174,7 @@ cleanup() {
     remote "pkill -u \$USER -f 'cpumon[.]py --out /tmp/mcn-cpu-server'" || true
     pkill -u "$USER" -f '[m]cn-cpu-burn' || true
     for pid in "${LOCAL_PIDS[@]}"; do kill "$pid" 2>/dev/null || true; done
+    if [[ "$NETEM" == 1 ]]; then set_netem none > /dev/null || true; fi
 }
 trap cleanup EXIT
 cleanup
@@ -171,49 +194,57 @@ fi
 read -r -a SPECS <<< "$POLICIES"
 for load in $SERVER_LOADS; do
     start_session "$load"
-    for rep in $(seq 1 "$REPS"); do
-        for item in $ITEMS; do
-            # Rotate the policy order every repetition to spread time-varying effects.
-            for i in "${!SPECS[@]}"; do
-                spec="${SPECS[$(( (i + rep - 1) % ${#SPECS[@]} ))]}"
-                tag="L${load}_${spec/:/-}_${item%.bin}_r${rep}"
-                if [[ "$WORKLOAD" == video ]]; then
-                    # shellcheck disable=SC2206 # options are split on purpose
-                    what=(-video:1 $VIDEO_OPTS)
-                else
-                    what=(-file:"$item")
-                fi
-                start=$(date +%s.%N)
-                output=$(timeout 900 "$BIN/quicfile" client -target:"$SERVER_IP" \
-                    -port:"${PORT[$spec]}" "${what[@]}" -tag:"$tag" -cc:"$CC" \
-                    -acklog:1 2>&1) || true
-                end=$(date +%s.%N)
-                prefix="load=$load spec=$spec rep=$rep"
-                line=$(grep "^$KIND" <<< "$output" || echo "$KIND tag=$tag file=$item FAILED=1")
-                # Client-side ACK-cost statistics ([mcn-stats]), keys prefixed with "cm_".
-                cstats=$(grep -m1 '^\[mcn-stats\]' <<< "$output" \
-                    | sed -E 's/^\[mcn-stats\] conn=[^ ]+ //; s/(^| )([a-z_]+)=/\1cm_\2=/g' || true)
-                line="$line $cstats"
-                # Throughput every 100 ms (downloads) and per-segment records (video).
-                grep -E '^(TPUT|SEG) ' <<< "$output" | sed "s/^/$prefix /" \
-                    >> "$OUT/$([[ $WORKLOAD == video ]] && echo segments || echo tput).log" || true
-                if [[ "$line" == *FAILED* ]]; then
-                    # Keep the client's own messages (e.g. shutdown status) for diagnosis.
-                    { echo "== $(date -Is) tag=$tag"; echo "$output" | grep -vE '^(TPUT|SEG|\[mcn\]) ' || true; } \
-                        >> "$OUT/failures.log"
-                fi
-                echo "$prefix start_ts=$start end_ts=$end $line" \
-                    | tee -a "$OUT/client.log" | cut -c1-200
-                # A failed download may leave its server unusable (seen once: a
-                # server stopped completing handshakes). Kill it; its loop in the
-                # session restarts it. Record the restart.
-                if [[ "$line" == *FAILED* ]]; then
-                    remote "pkill -KILL -u \$USER -f '[q]uicfile server .*-port:${PORT[$spec]} '" || true
-                    sleep 3
-                    echo "$(date -Is) restarted server spec=$spec after tag=$tag" \
-                        | tee -a "$OUT/restarts.log"
-                fi
-                sleep 1
+    for net in $NETEM_PROFILES; do
+        net_tag="" net_prefix=""
+        if [[ "$NETEM" == 1 ]]; then
+            { echo "== $(date -Is) load=$load net=$net"; set_netem "$net"; } | tee -a "$OUT/netem.log"
+            net_tag="_N$(tr ':.' '-p' <<< "$net")" net_prefix=" net=$net"
+            sleep 2
+        fi
+        for rep in $(seq 1 "$REPS"); do
+            for item in $ITEMS; do
+                # Rotate the policy order every repetition to spread time-varying effects.
+                for i in "${!SPECS[@]}"; do
+                    spec="${SPECS[$(( (i + rep - 1) % ${#SPECS[@]} ))]}"
+                    tag="L${load}${net_tag}_${spec/:/-}_${item%.bin}_r${rep}"
+                    if [[ "$WORKLOAD" == video ]]; then
+                        # shellcheck disable=SC2206 # options are split on purpose
+                        what=(-video:1 $VIDEO_OPTS)
+                    else
+                        what=(-file:"$item")
+                    fi
+                    start=$(date +%s.%N)
+                    output=$(timeout 900 "$BIN/quicfile" client -target:"$SERVER_IP" \
+                        -port:"${PORT[$spec]}" "${what[@]}" -tag:"$tag" -cc:"$CC" \
+                        -acklog:1 2>&1) || true
+                    end=$(date +%s.%N)
+                    prefix="load=$load spec=$spec rep=$rep$net_prefix"
+                    line=$(grep "^$KIND" <<< "$output" || echo "$KIND tag=$tag file=$item FAILED=1")
+                    # Client-side ACK-cost statistics ([mcn-stats]), keys prefixed with "cm_".
+                    cstats=$(grep -m1 '^\[mcn-stats\]' <<< "$output" \
+                        | sed -E 's/^\[mcn-stats\] conn=[^ ]+ //; s/(^| )([a-z_]+)=/\1cm_\2=/g' || true)
+                    line="$line $cstats"
+                    # Throughput every 100 ms (downloads) and per-segment records (video).
+                    grep -E '^(TPUT|SEG) ' <<< "$output" | sed "s/^/$prefix /" \
+                        >> "$OUT/$([[ $WORKLOAD == video ]] && echo segments || echo tput).log" || true
+                    if [[ "$line" == *FAILED* ]]; then
+                        # Keep the client's own messages (e.g. shutdown status) for diagnosis.
+                        { echo "== $(date -Is) tag=$tag"; echo "$output" | grep -vE '^(TPUT|SEG|\[mcn\]) ' || true; } \
+                            >> "$OUT/failures.log"
+                    fi
+                    echo "$prefix start_ts=$start end_ts=$end $line" \
+                        | tee -a "$OUT/client.log" | cut -c1-200
+                    # A failed download may leave its server unusable (seen once: a
+                    # server stopped completing handshakes). Kill it; its loop in the
+                    # session restarts it. Record the restart.
+                    if [[ "$line" == *FAILED* ]]; then
+                        remote "pkill -KILL -u \$USER -f '[q]uicfile server .*-port:${PORT[$spec]} '" || true
+                        sleep 3
+                        echo "$(date -Is) restarted server spec=$spec after tag=$tag" \
+                            | tee -a "$OUT/restarts.log"
+                    fi
+                    sleep 1
+                done
             done
         done
     done

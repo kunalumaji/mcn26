@@ -167,10 +167,12 @@ Details, tables and discussion: [docs/report.md](docs/report.md).
 | `scripts/cpu-load.sh` | CPU load: `N` or `Kx` (K per logical CPU) busy-loop processes |
 | `scripts/server-session.sh` | Runs all servers of a run and the CPU load in one session, so the load competes with the QUIC threads (see [Server CPU load](#how-the-server-cpu-load-is-generated)) |
 | `scripts/cpumon.py` | Logs machine and `quicfile` CPU every 200 ms |
+| `scripts/netem.sh` | Emulates a path (rate, delay, random loss) on the server's egress with `tc` `tbf` + `netem` |
 | `experiments/run_quicfile.sh` | The evaluation runner (run on the client) |
 | `analysis/parse_results.py` | Turns a run into `runs.csv` (downloads) or `videos.csv` (video sessions), `ack_decisions.csv`, `summary.csv` |
 | `analysis/plot.py` | Draws the figures of a run into `results/<run>/figures/` |
 | `analysis/summarize.py` | Prints the report's tables (markdown) for a run |
+| `analysis/loss.py` | Tables and the report figure for the lossy-path experiments (4 and 5) |
 | `results/` | One folder per evaluation run; index in [results/README.md](results/README.md) |
 | `docs/` | [Report](docs/report.md), [design notes](docs/design.md), [BibTeX](docs/refs.bib) |
 | `proposal/` | Course proposal |
@@ -215,19 +217,28 @@ ssh <user>@<server> 'cd ~/Documents/mcn26 && git merge --ff-only from-client && 
 
 ### 3. Run the evaluation (on the client)
 
-All experiments of the report, with figures and tables (about 2–3 hours over ~600 Mbit/s Wi-Fi):
+All experiments of the report, with figures and tables (about 2–3 hours over ~600 Mbit/s Wi-Fi
+for experiments 1–3, about 1.5 hours for 4–5):
 
 ```bash
-SERVER=<user>@<server-ip> experiments/run_all.sh
+SERVER=<user>@<server-ip> NETEM_SERVER=<user>@<netem-server-ip> experiments/run_all.sh
+EXPERIMENTS="4 5" experiments/run_all.sh     # only some of them
 ```
 
-It runs three experiments, each into its own `results/<timestamp>/`:
+It runs five experiments, each into its own `results/<timestamp>/`:
 
 | # | Experiment | Settings (see [`experiments/run_all.sh`](experiments/run_all.sh)) |
 |---|---|---|
 | 1 | File downloads | 12 policy variants × 4 files (20 MB–1 GB) × server load `0`, `2x`, `4x` × 3 repetitions = 432 downloads |
 | 2 | Load sweep | 500 MB, 4 policies, server load `0` to `4x` in 7 steps, 2 repetitions |
 | 3 | Video streaming | 8 policies × server load `0`, `2x`, `4x` × 3 repetitions; 40 s of video in 2 s segments, bitrates 25–400 Mbit/s |
+| 4 | Loss sensitivity of a fixed threshold | 100 MB, `fixed:2` to `fixed:100` (7 values) on an emulated 100 Mbit/s path with +10 ms and 0% or 0.1% random loss, no CPU load, 3 repetitions |
+| 5 | Policies on the lossy path | 100 MB, 8 policies on the same path × server load `0`, `2x`, `4x` × 3 repetitions |
+
+Experiments 4 and 5 emulate the path with `tc` (`tbf` + `netem`, [`scripts/netem.sh`](scripts/netem.sh))
+on the egress of `NETEM_SERVER`, which needs a passwordless sudo rule for `tc`
+(`<user> ALL=(root) NOPASSWD: /usr/sbin/tc`). Their tables and figure come from
+[`analysis/loss.py`](analysis/loss.py).
 
 Each experiment is one call of `experiments/run_quicfile.sh`, configured by environment
 variables. For example, a 1-minute check of the pipeline:
@@ -249,6 +260,7 @@ python3 analysis/summarize.py results/<timestamp>   # the report's tables (markd
 | `POLICIES` | the 12 specs of experiment 1 | `default`, `fixed:N`, `litequic`, `adaptive[:N]`, each optionally `+net`, `+phase`, `+reorder`, `+delay` |
 | `SERVER_LOADS` | `0 2x 4x` | Server CPU load levels: `0` none, `N` busy loops, `Kx` K per logical CPU |
 | `LOAD_SCOPE` | `shared` | `shared`: load competes with the QUIC threads; `separate`: the pre-Nov-14 behaviour ([why](#how-the-server-cpu-load-is-generated)) |
+| `NETEM_PROFILES` | `none` | Emulated paths on the server's egress, each run at every load level: `none` or `<rate>:<delay>:<loss%>`, e.g. `100mbit:10ms:0.1` (needs sudo for `tc` on the server) |
 | `CLIENT_LOAD` | `0` | CPU load on the client during all runs |
 | `REPS` | `3` | Repetitions per (load, file, policy) |
 | `CC` | `cubic` | Congestion control: `cubic` or `bbr` |
@@ -271,13 +283,14 @@ What the runner does:
 | `meta.txt` | Settings, commits, hosts, kernels |
 | `runs.csv` | **One row per download**: `download_s` (connection start to last byte), `goodput_mbps` (bytes / transfer time), `tput_p10/p50/p90_mbps` (percentiles of the throughput in 100 ms intervals), `data_pkts_per_ack`, `server_recv_ack_frames`, `server_recv_us_per_mb`, `server_ack_proc_us_per_mb`, `client_send_us_per_mb`, process CPU per MB, machine CPU %, losses, reordered packets, RTT, mean threshold `T` |
 | `videos.csv` | **One row per video session** (`WORKLOAD=video`): `avg_bitrate_mbps`, `startup_ms`, `rebuffer_events`, `rebuffer_ms`, `switches`, `qoe`, segment throughput, plus the same ACK and CPU columns as `runs.csv` |
-| `summary.csv` | Medians per (server load, policy, file) |
+| `summary.csv` | Medians per (server load, emulated path if any, policy, file) |
 | `ack_decisions.csv` | Every threshold decision over time with the policy's inputs |
 | `tput.log` | Throughput in every 100 ms of every download (`TPUT` lines) |
 | `segments.log` | One line per video segment: bitrate, download time, throughput, buffer level, stall (`SEG` lines) |
 | `cpu_client.csv`, `cpu_server.csv` | CPU time series of both machines |
 | `client.log`, `server.log` | Raw output (`RESULT`/`VIDEO`, `SERVER`, `[mcn]`, `[mcn-stats]` lines) |
-| `figures/`, `tables.md` | Plots from `analysis/plot.py`, tables from `analysis/summarize.py` |
+| `netem.log` | Emulated-path runs: the `tc` qdiscs set for each path and load level |
+| `figures/`, `tables.md` | Plots from `analysis/plot.py`, tables from `analysis/summarize.py` (lossy-path runs: `analysis/loss.py`) |
 
 ### 5. A single download or video session by hand
 

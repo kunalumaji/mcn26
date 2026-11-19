@@ -9,7 +9,8 @@ Reads client.log and server.log; writes:
   videos.csv         one row per video session (client VIDEO line, same joins), for
                      WORKLOAD=video runs
   ack_decisions.csv  every ACK policy decision ([mcn] lines), with the run's tag
-  summary.csv        medians per (server load, policy, file); also printed as a table
+  summary.csv        medians per (server load[, emulated path], policy, file); also printed
+                     as a table
 tput.log (throughput per 100 ms), segments.log (one line per video segment) and
 cpu_client.csv / cpu_server.csv (scripts/cpumon.py) are left as they are.
 """
@@ -139,6 +140,8 @@ def main():
             "tag": tag,
             "kind": "video" if c["kind"] == "VIDEO" else "download",
             "server_load": c["load"],
+            # Emulated path (NETEM_PROFILES), "none" without emulation.
+            "netem": c.get("net", "none"),
             "spec": spec,
             "policy": spec.split("+")[0].split(":")[0],
             "modifiers": "+".join(spec.split("+")[1:]),
@@ -221,26 +224,32 @@ def main():
     groups = defaultdict(list)
     for r in rows:
         if r["ok"]:
-            groups[(r["server_load"], r["spec"], r["file"])].append(r)
+            groups[(r["server_load"], r["netem"], r["spec"], r["file"])].append(r)
     summary = []
-    for (load, spec, file), group in groups.items():
-        entry = {"server_load": load, "spec": spec, "file": file, "n": len(group)}
+    for (load, netem, spec, file), group in groups.items():
+        entry = {"server_load": load, "netem": netem, "spec": spec, "file": file,
+                 "n": len(group)}
         for m in metrics:
             values = [r[m] for r in group if r.get(m) is not None]
             entry[m] = round(statistics.median(values), 2) if values else None
         summary.append(entry)
     order = {s: i for i, s in enumerate(dict.fromkeys(r["spec"] for r in rows))}
-    summary.sort(key=lambda e: (e["server_load"], file_mb(e["file"]), order[e["spec"]]))
+    net_order = {s: i for i, s in enumerate(dict.fromkeys(r["netem"] for r in rows))}
+    summary.sort(key=lambda e: (e["server_load"], net_order[e["netem"]], file_mb(e["file"]),
+                                order[e["spec"]]))
     metrics = [m for m in metrics if any(e[m] is not None for e in summary)]
+    # The netem column only for runs with an emulated path (keeps older summaries as they were).
+    keys = ["server_load", "netem"] if any(e["netem"] != "none" for e in summary) \
+        else ["server_load"]
     with open(out / "summary.csv", "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["server_load", "spec", "file", "n"] + metrics,
+        writer = csv.DictWriter(f, fieldnames=keys + ["spec", "file", "n"] + metrics,
                                 extrasaction="ignore")
         writer.writeheader()
         writer.writerows(summary)
 
     failed = sum(1 for r in rows if not r["ok"])
     print(f"{len(rows)} runs ({failed} failed), {len(decisions)} ACK decisions")
-    cols = ["server_load", "file", "spec", "n",
+    cols = [*keys, "file", "spec", "n",
             *(["avg_bitrate_mbps", "rebuffer_ms", "qoe"] if "qoe" in metrics
               else ["download_s", "goodput_mbps"]),
             "data_pkts_per_ack", "server_recv_us_per_mb", "client_send_us_per_mb",
