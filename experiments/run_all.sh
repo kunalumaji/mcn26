@@ -59,10 +59,10 @@ for experiment in $EXPERIMENTS; do
                NETEM_PROFILES="$LOSS_PATH" \
                POLICIES="fixed:2 fixed:100 fixed:100+phase litequic adaptive adaptive+net adaptive+phase+reorder+delay adaptive+net+phase+reorder+delay"
            loss_runs+=("${runs[-1]}") ;;
-        # 6. Ceiling sweep on the lossy path under 2x load: goodput and ACK savings of each
+        # 6. Ceiling sweep under 2x load on the clean and the lossy path: goodput of each
         #    modifier as a function of the highest threshold adaptive may choose.
-        6) run SERVER="$NETEM_SERVER" FILES=100MB.bin REPS=3 SERVER_LOADS=2x \
-               NETEM_PROFILES="100mbit:10ms:0.1" POLICIES="fixed:2$CEILING_SWEEP"
+        6) run SERVER="$NETEM_SERVER" FILES=100MB.bin REPS=6 SERVER_LOADS=2x \
+               NETEM_PROFILES="$LOSS_PATH" POLICIES="fixed:2$CEILING_SWEEP"
            loss_runs+=("${runs[-1]}") ;;
         *) echo "unknown experiment $experiment" >&2; exit 1 ;;
     esac

@@ -195,7 +195,7 @@ def figure(sweep, ceiling, path):
         "axes.linewidth": 0.8, "xtick.direction": "in", "ytick.direction": "in",
         "pdf.fonttype": 42,
     })
-    fig, axes = plt.subplots(1, 3, figsize=(8.6, 3.0), gridspec_kw={"wspace": 0.34})
+    fig, axes = plt.subplots(1, 3, figsize=(8.6, 2.8), gridspec_kw={"wspace": 0.34})
 
     # (a) Fixed-threshold sweep on the clean and the lossy path (idle server).
     ax = axes[0]
