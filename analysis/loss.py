@@ -156,8 +156,8 @@ def figure(sweep, policies, path):
         "axes.linewidth": 0.8, "xtick.direction": "in", "ytick.direction": "in",
         "hatch.linewidth": 1.4, "pdf.fonttype": 42,
     })
-    fig, axes = plt.subplots(1, 3, figsize=(10.5, 3.1),
-                             gridspec_kw={"width_ratios": [1, 1.25, 1.25], "wspace": 0.3})
+    fig, axes = plt.subplots(1, 3, figsize=(8.6, 3.0),
+                             gridspec_kw={"width_ratios": [1.25, 1.3, 1.3], "wspace": 0.3})
 
     # (a) Fixed-threshold sweep on the clean and the lossy path (no CPU load).
     ax = axes[0]
@@ -234,7 +234,7 @@ def figure(sweep, policies, path):
     grid = [handles[r * ncol:(r + 1) * ncol] for r in range(rows)]
     ordered = [grid[r][c] for c in range(ncol) for r in range(rows) if c < len(grid[r])]
     fig.legend(handles=ordered, loc="upper center", ncol=ncol, frameon=False,
-               bbox_to_anchor=(0.5, 1.12), columnspacing=1.2, handlelength=2.2)
+               bbox_to_anchor=(0.5, 1.15), columnspacing=1.0, handlelength=2.0)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, bbox_inches="tight", pad_inches=0.02)
     print(f"wrote {path}")

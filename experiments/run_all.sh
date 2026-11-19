@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # All experiments of the report, in order, then figures and tables for each.
 # Experiments 1-3: about 2-3 hours with the client on ~600 Mbit/s Wi-Fi (runtime scales
-# with link speed). Experiments 4-5 (lossy path): about 1.5 hours.
+# with link speed). Experiments 4-6 (lossy path): about 2.5 hours.
 # Run on the client; see README.md for the setup. Each experiment writes its own
 # results/<timestamp>/ folder; their paths are printed at the end.
 #
@@ -10,15 +10,21 @@
 # Do not edit tracked files while it runs: every experiment checks that both machines
 # are on the same clean commit.
 #
-#   EXPERIMENTS   which experiments to run  [1 2 3 4 5]
-#   NETEM_SERVER  server of experiments 4-5: needs passwordless sudo for /usr/sbin/tc
+#   EXPERIMENTS   which experiments to run  [1 2 3 4 5 6]
+#   NETEM_SERVER  server of experiments 4-6: needs passwordless sudo for /usr/sbin/tc
 #                 (scripts/netem.sh)  [kunal@10.21.232.3]
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-EXPERIMENTS="${EXPERIMENTS:-1 2 3 4 5}"
+EXPERIMENTS="${EXPERIMENTS:-1 2 3 4 5 6}"
 NETEM_SERVER="${NETEM_SERVER:-kunal@10.21.232.3}"
-# Emulated path of experiments 4-5: 100 Mbit/s bottleneck, +10 ms, 0% and 0.1% random loss.
+# Emulated path of experiments 4-6: 100 Mbit/s bottleneck, +10 ms, 0% and 0.1% random loss.
 LOSS_PATH="100mbit:10ms:0 100mbit:10ms:0.1"
+# Experiment 6: adaptive's ceiling C swept with each modifier (under load adaptive sits at C).
+CEILINGS="2 4 8 16 32 64 100"
+CEILING_SWEEP=""
+for modifiers in "" +phase +delay +net +net+phase+reorder+delay; do
+    for c in $CEILINGS; do CEILING_SWEEP+=" adaptive:$c$modifiers"; done
+done
 
 runs=()
 loss_runs=()
@@ -53,6 +59,11 @@ for experiment in $EXPERIMENTS; do
                NETEM_PROFILES="$LOSS_PATH" \
                POLICIES="fixed:2 fixed:100 fixed:100+phase litequic adaptive adaptive+net adaptive+phase+reorder+delay adaptive+net+phase+reorder+delay"
            loss_runs+=("${runs[-1]}") ;;
+        # 6. Ceiling sweep on the lossy path under 2x load: goodput and ACK savings of each
+        #    modifier as a function of the highest threshold adaptive may choose.
+        6) run SERVER="$NETEM_SERVER" FILES=100MB.bin REPS=3 SERVER_LOADS=2x \
+               NETEM_PROFILES="100mbit:10ms:0.1" POLICIES="fixed:2$CEILING_SWEEP"
+           loss_runs+=("${runs[-1]}") ;;
         *) echo "unknown experiment $experiment" >&2; exit 1 ;;
     esac
 done
@@ -65,9 +76,9 @@ for out in "${runs[@]}"; do
         python3 analysis/summarize.py "$out" > "$out/tables.md"
     fi
 done
-# Figure of experiments 4-5 together (as in the report).
-if [[ ${#loss_runs[@]} == 2 ]]; then
-    python3 analysis/loss.py --fig "${loss_runs[1]}/figures/loss.pdf" "${loss_runs[@]}" > /dev/null
+# Figure of the lossy-path experiments together (as in the report).
+if [[ ${#loss_runs[@]} -ge 2 ]]; then
+    python3 analysis/loss.py --fig "${loss_runs[-1]}/figures/loss.pdf" "${loss_runs[@]}" > /dev/null
 fi
 printf 'Results:\n'
 printf '  %s\n' "${runs[@]}"
