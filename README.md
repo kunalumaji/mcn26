@@ -1,6 +1,6 @@
 # mcn26: Adaptive ACK Frequency for QUIC
 
-Modern Networks course project (team: Kunal Umaji, Kaveenraj G, Aravindh Sriram Kumar A G).
+Modern Networks course project (team: Kunal Umaji, Kaveenraj Gopalakrishnan, Aravindh Sriram Kumar A G).
 
 **Full write-up: [docs/report.md](docs/report.md).**
 
