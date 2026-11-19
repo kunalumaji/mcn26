@@ -447,13 +447,26 @@ also delays feedback when the sender is starved or the path is lossy.
 
 \FloatBarrier
 \section{Limitations and Future Work}
-\enlargethispage{\baselineskip} % keeps the last reference on page 9
 Our results come from small samples ($n{=}2$--6 per Wi-Fi cell, $n{=}3$--6 in Exps.~4--6) with
 single connections and Cubic, and one client. CPU contention came from busy loops, and
 4.3\% of the Wi-Fi runs stalled for reasons we could not explain (\S\ref{sec:downloads}). The ceiling of 100 and other constants were
-chosen by hand. We emulated only one lossy path (100\mbps, +10\ms, 0.1\% random loss). As
-future work, we plan a full matrix of bandwidth, RTT, loss and CPU load to find the best threshold
-for each condition. These data could then train a lightweight MLP that predicts $T$ from CPU
+chosen by hand. We emulated only one lossy path (100\mbps, +10\ms, 0.1\% random loss).
+
+\para{Why fewer ACKs did not raise throughput.} In all our experiments the link, not the CPU,
+limited goodput: Wi-Fi delivered 460--660\mbps{} and the emulated path 100\mbps. On Wi-Fi, MsQuic
+already coalesces about 50 data packets per ACK at $T{=}2$, so the server's ACK path costs only
+about 5\% of one core at 580\mbps, and \pol{adaptive} saves less than 1\% of a core. On the
+emulated path the saving is larger (65\% of the server's ACK-processing time), but the 100\mbps{}
+bottleneck caps every policy at 93\mbps. Freed CPU can raise throughput only when ACK processing
+limits the transfer: at 10--25\,Gb/s, where user-space packet processing makes a QUIC connection
+CPU-bound~\cite{zhang2024quic}, on servers with many connections, or on low-power
+clients~\cite{bi2024litequic}. Our results therefore show CPU saved at unchanged goodput, not a
+throughput gain.
+
+\para{Future work.} We plan to repeat these experiments on 10 and 25\,Gb/s links, where a single
+QUIC connection is CPU-bound, to test whether the freed CPU turns into higher throughput, and to
+measure aggregate capacity with many concurrent connections. We also plan a full matrix of
+bandwidth, RTT, loss and CPU load to find the best threshold for each condition. These data could then train a lightweight MLP that predicts $T$ from CPU
 pressure, bandwidth, SRTT, loss and the congestion window. Its output would be clipped to
 $[2, \mathrm{cwnd}_{\mathrm{pkts}}/4]$ and reset to 2 after a loss. Both extensions are proposed
 and not yet implemented.
