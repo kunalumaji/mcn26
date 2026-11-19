@@ -2,4 +2,4 @@
 *.aux
 *.log
 *.out
-report.pdf
+report*.pdf

@@ -58,8 +58,11 @@ ACK delay with the RTT. Over 460--660\mbps{} Wi-Fi, \pol{adaptive} keeps $T{=}2$
 server. Under moderate CPU load it cuts ACKs by 56\% and client ACK-generation time by 44\% without
 lowering goodput or video QoE. On a CPU-starved server, large thresholds cause throughput
 collapses, while the window and delay bounds keep baseline performance with about 40\% fewer ACKs.
-On emulated paths, $T{=}100$ cuts server CPU by 44--59\% but loses 80\% of goodput at 0.1\% loss,
-so network state must bound any CPU-driven threshold.
+On an emulated 100\mbps{} path under CPU load, \pol{adaptive} cuts server ACK-processing time by
+60--65\% at no cost in goodput. With 0.1\% random loss, however, its CPU-driven threshold loses two thirds of the goodput.
+Bounding $T$ by the congestion window and the RTT keeps 79--96\% of the baseline goodput at any
+ceiling while still removing two thirds of the ACKs. Network state must therefore bound any
+CPU-driven threshold.
 \end{abstract}
 
 \section{Introduction}
@@ -80,7 +83,7 @@ acknowledged~\cite{rfc9002}.
 We implement in MsQuic fixed, LiteQUIC-inspired and CPU-aware (\pol{adaptive}) threshold policies,
 plus modifiers that bound $T$ by the congestion state and the RTT, using only standard
 \pol{ACK\_FREQUENCY} frames (\S\ref{sec:method}). We evaluate them with file downloads, a CPU-load sweep and video
-streaming over Wi-Fi, and with fixed thresholds on emulated paths (\S\S\ref{sec:setup}--\ref{sec:results}). CPU pressure tells the
+streaming over Wi-Fi, and on an emulated lossy path under CPU load (\S\S\ref{sec:setup}--\ref{sec:results}). CPU pressure tells the
 sender \emph{when} to reduce ACKs, but network state must bound \emph{how far}.
 
 \section{Problem Statement}\label{sec:problem}
@@ -260,12 +263,15 @@ from the previous bitrate and a penalty of 400\mbps{} per second of startup dela
 rebuffering. Policies are interleaved and rotated between repetitions. Figures show a subset of the variants;
 tables for all of them are in the repository.
 
-\para{Network-emulated testbed (Exp.~4).} This experiment uses a different server with 28 cores. We
-apply \pol{tbf} and \pol{netem} on its egress interface. The profiles cover 20 to 500\mbps{} with
-5 to 100\ms{} of added delay, and 100\mbps{} with 0.1\% loss. We also use the unemulated LAN at
-about 930\mbps. We test \pol{fixed:2} to \pol{fixed:100} with one 100\,MB or 1\,GB download per
-point. Its CPU load ran in a separate session and never reached the QUIC threads, so we use only
-unloaded runs.
+\para{Lossy-path testbed (Exps.~4--6).} These experiments use a second server, an Intel i7-14700
+(28 threads, Ubuntu 24.04) with a 100\,Mb/s Ethernet port, and the same Wi-Fi client. With
+\pol{tbf} and \pol{netem} on the server's egress we emulate a 100\mbps{} bottleneck with 10\ms{} of
+added delay (minimum RTT 11.5\ms), either without loss or with 0.1\% random loss. Every run
+downloads a 100\,MB file. Experiment 4 sweeps \pol{fixed:2} to \pol{fixed:100} without CPU load.
+Experiment 5 compares 8 policies on both paths at no load, 2x and 4x, with the load in the servers'
+session as in Exps.~1--3. Experiment 6 sweeps the ceiling $C$ of \pol{adaptive} from 2 to 100 at
+2x load on both paths, with no modifier and with \pol{+phase}, \pol{+delay}, \pol{+net} and all of
+them. Exps.~4--5 use 3 repetitions and Exp.~6 uses 6 per path; none of the 618 runs stalled.
 
 \para{Metrics.} Besides ACK counts and ACK-path times, we report goodput, completion time and the
 10th percentile of 100\ms{} throughput (p10). A download \emph{collapses} when its p10 falls below 100\mbps. A run \emph{stalls} when
@@ -363,33 +369,61 @@ sessions under load stalled. Plain \pol{adaptive} and \pol{litequic} remove
 \pol{+delay} keep each segment's ramp-up and feedback timely.
 
 \FloatBarrier
-\subsection{ACK threshold sensitivity}
-Exp.~4 measures the trade-off between CPU savings and timely feedback with \emph{fixed}
-thresholds on emulated paths without CPU load; it does not test \pol{adaptive} directly.
+\subsection{Performance on a lossy path}\label{sec:loss}
+Exps.~4--6 test whether a large threshold is safe when the path loses packets: first with fixed
+thresholds on an idle server, then with the policies under CPU load, where \pol{adaptive} raises
+$T$ because the CPU is busy, not because the path allows it.
 
 \begin{figure}[htbp]
   \centering
-  \includegraphics[width=\textwidth]{fig4_threshold_network}
-  \caption{Fixed-threshold sweep on emulated paths, no CPU load (Exp.~4, $n{=}1$ per point). (a)
-    server process CPU per MiB; (b) goodput for each bandwidth/delay profile (log scale); (c)
-    goodput at 100\mbps{} +10\ms{} with 0\% and 0.1\% random loss.}
+  \includegraphics[width=0.96\textwidth]{fig4_threshold_loss}
+  \caption{Goodput vs.\ ACK threshold on the emulated 100\mbps, +10\ms{} path with 0\% and 0.1\%
+    random loss (100\,MB downloads; medians, whiskers: IQR). (a) \pol{fixed:}$T$, idle server
+    (Exp.~4, $n{=}3$). (b)--(f) \pol{adaptive} with each modifier set at 2x CPU load vs.\ its
+    ceiling $C$, which $T$ reaches unless \pol{+net} caps it (Exp.~6, $n{=}6$).}
   \label{fig:threshold}
 \end{figure}
 
-Figure~\ref{fig:threshold}(a) shows that raising $T$ from 2 to 100 cuts server CPU per MiB by
-44--59\%, far more than on Wi-Fi: the shaped paths deliver packets spread out, so at $T{=}2$ the
-receiver acknowledges much more often than once per 50 packets (\S\ref{sec:downloads}). The curve flattens early,
-since $T{=}32$ already gives 75--96\% of the saving. On the 930\mbps{} LAN, the receiver already
-coalesces ACKs, so the saving is only 15\%.
+\para{Fixed thresholds.} Without loss, every threshold from 2 to 100 reaches 79--93\mbps{}
+(Figure~\ref{fig:threshold}a). On this path $T{=}2$ yields one ACK per 4--5 packets, not one per
+50 as on Wi-Fi (\S\ref{sec:downloads}), so a large $T$ saves far more ACK work: $T{=}100$ removes
+95\% of ACKs and cuts server ACK-processing time by 59\% and client ACK-generation time by 91\%.
+With 0.1\% loss, $T{\le}8$ stays within the run-to-run variation of $T{=}2$ (51--61 vs.\
+59\mbps), and $T{=}8$ already removes 57\% of ACKs. Beyond that, goodput falls to 48\mbps{} at
+$T{=}16$ and to 14.5\mbps{} at $T{=}100$, a 76\% loss. Sparse ACKs delay loss detection and slow down every recovery.
 
-Figure~\ref{fig:threshold}(b) shows that clean paths tolerate large thresholds. Goodput changes by
-only $-1.2$\% to $+0.5$\%, and 100\ms{} of added delay instead of 20\ms{} changes neither curve.
-$T$ stays below the hundreds of packets in flight.
+\para{Idle server and clean path.} In Exp.~5, without CPU load, \pol{adaptive}, all its variants
+and \pol{litequic} keep $T{\approx}2$ and match \pol{fixed:2} on both paths. Under load on the clean
+path, every variant reaches 93\mbps{} at every ceiling, like \pol{fixed:2}
+(Figure~\ref{fig:threshold}b--f, 0\% loss), while its ACK reduction grows with $C$ to 82--94\% at
+$C{=}100$. There, \pol{adaptive} cuts server ACK-processing time by 65\% and client ACK-generation
+time by 91\%; \pol{adaptive+all}, whose window bound keeps $T$ near 34, cuts them by 55\% and
+77\%. Where ACKs are frequent, reducing them saves substantial CPU at no cost in goodput.
 
-Figure~\ref{fig:threshold}(c) shows the opposite with 0.1\% loss. Goodput falls from
-77.5--80.5\mbps{} at $T{\le}4$ to 15.8\mbps{} at $T{=}100$, and congestion events double. Sparse
-ACKs delay loss detection. CPU pressure alone therefore cannot set a safe threshold. Loss and
-window size must bound it.
+\para{Lossy path under load.} Here CPU pressure alone fails. Under load, \pol{adaptive} raises
+$T$ to its ceiling, so its goodput follows the fixed-threshold curve
+(Figure~\ref{fig:threshold}b vs.\ a). Up to $C{=}8$ it matches \pol{fixed:2} (52--54 vs.\
+50.5\mbps) with up to 59\% fewer ACKs, but at $C{\ge}64$ it falls to 17\mbps, a 67\% loss.
+\pol{+phase} does not change this (Figure~\ref{fig:threshold}c, 19\mbps), because $T{=}2$ applies
+only during each recovery period. The other modifiers make large ceilings safe. \pol{+net}
+(Figure~\ref{fig:threshold}e) caps $T$ near 15 after congestion events, so from $C{=}16$ on its
+goodput stays at 42--46\mbps{} with 76--78\% fewer ACKs. \pol{+delay} (Figure~\ref{fig:threshold}d)
+requests an ACK within SRTT/4, about 3\ms, which limits the gap between ACKs to about 12 packets;
+from $C{=}16$ on it keeps 42--55\mbps{} with 72--74\% fewer ACKs. Combining both,
+\pol{adaptive+all} (Figure~\ref{fig:threshold}f) comes closest to the baseline: 48--49\mbps{}
+(94--96\%) at every $C{\ge}16$, with 67--69\% fewer ACKs, 45--49\% less server ACK-processing time
+and 59--62\% less client ACK-generation time. The modifiers thus trade part of the ACK reduction
+(69--78\% instead of 93\%) for nearly all of the goodput, and they cost nothing on the clean path.
+The remaining gap comes from where the bounds settle: thresholds up to 8 cost nothing at 0.1\%
+loss (Figure~\ref{fig:threshold}a--b), but the bounds settle near $T{=}16$, at the knee of the
+curve; a ceiling that shrinks with the measured loss rate could close it.
+
+Exp.~5 confirms this with $C{=}100$ at 2x and 4x load: \pol{adaptive} falls to 16\mbps,
+\pol{adaptive+all} keeps 79--84\% of \pol{fixed:2}'s goodput with 65--66\% fewer ACKs, and
+\pol{litequic} ($T{\approx}3$) removes only 5--15\% of ACKs. One anomaly: with \pol{+delay} alone and $C{\le}4$, 8 of 12 lossy runs filled the bottleneck
+queue (SRTT 24--41 vs.\ 13\ms), lost 4--6 times more packets and reached 73--90\mbps{}
+(Figure~\ref{fig:threshold}d), a mode seen in only 13 of the other 204 lossy runs and never with
+\pol{fixed:2}; we could not explain it and do not count it as a gain.
 
 \FloatBarrier
 \subsection{Overall policy comparison}
@@ -413,10 +447,11 @@ also delays feedback when the sender is starved or the path is lossy.
 
 \FloatBarrier
 \section{Limitations and Future Work}
-Our results come from small samples ($n{=}2$--6 per Wi-Fi cell, $n{=}1$ in Exp.~4) on one
-client--server pair with single connections and Cubic. CPU contention came from busy loops, and
-4.3\% of runs stalled for reasons we could not explain (\S\ref{sec:downloads}). The ceiling of 100 and other constants were
-chosen by hand, and we varied bandwidth, RTT and loss only one at a time without CPU load. As
+\enlargethispage{\baselineskip} % keeps the last reference on page 9
+Our results come from small samples ($n{=}2$--6 per Wi-Fi cell, $n{=}3$--6 in Exps.~4--6) with
+single connections and Cubic, and one client. CPU contention came from busy loops, and
+4.3\% of the Wi-Fi runs stalled for reasons we could not explain (\S\ref{sec:downloads}). The ceiling of 100 and other constants were
+chosen by hand. We emulated only one lossy path (100\mbps, +10\ms, 0.1\% random loss). As
 future work, we plan a full matrix of bandwidth, RTT, loss and CPU load to find the best threshold
 for each condition. These data could then train a lightweight MLP that predicts $T$ from CPU
 pressure, bandwidth, SRTT, loss and the congestion window. Its output would be clipped to
@@ -431,9 +466,10 @@ load it lowers ACK overhead without hurting download or video performance. Under
 large threshold alone causes throughput collapses. Bounding the threshold by the congestion window
 and scaling the ACK delay with the RTT keep feedback timely and preserve performance. A ceiling of
 255 removed the most ACKs but caused the most collapses, so the ceiling should stay near 100 or
-follow the congestion window. Large
-thresholds also fail on lossy paths, so network conditions must constrain any CPU-driven choice of
-the ACK threshold.
+follow the congestion window. On a
+lossy path, a CPU-driven threshold alone loses two thirds of the goodput, while bounding it by the
+congestion window and the RTT keeps 79--96\% of it with two thirds fewer ACKs. Network conditions
+must therefore constrain any CPU-driven choice of the ACK threshold.
 
 \para{Individual contributions.} \emph{Kunal Umaji} built the base MsQuic implementation. Kunal
 added the policy framework, the \pol{ACK\_FREQUENCY} update path and the ACK-cost instrumentation,
@@ -447,11 +483,13 @@ timeliness.
 
 \para{Repository and reproduction.} The code is at \url{https://github.com/kunalumaji/mcn26}
 (branch \pol{staging}). Build MsQuic and the \pol{quicfile} tool on both machines with
-\path{scripts/setup.sh}. Run Exps.~1--3 with \path{experiments/run_all.sh} and the emulated sweep
-with \path{experiments/run_netlog.sh}.
+\path{scripts/setup.sh}. Run all experiments with \path{experiments/run_all.sh}; Exps.~4--6 emulate the path with
+\path{scripts/netem.sh}.
 
 % References in the proposal's style, numbered in order of first citation.
+{\small
 \begin{thebibliography}{9}
+\setlength{\itemsep}{1pt}\setlength{\parsep}{0pt}
 \bibitem{zhang2024quic} X. Zhang, S. Jin, Y. He, A. Hassan, Z. M. Mao, F. Qian, and Z.-L. Zhang.
   ``QUIC is not Quick Enough over Fast Internet,'' \emph{Proceedings of the ACM Web Conference
   (WWW)}, 2024.
@@ -468,5 +506,6 @@ with \path{experiments/run_netlog.sh}.
   Acknowledgement Frequency in IETF QUIC,'' \emph{International Journal of Satellite Communications
   and Networking}, vol.~41, no.~4, pp.~315--330, 2023.
 \end{thebibliography}
+}
 
 \end{document}

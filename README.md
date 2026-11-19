@@ -125,6 +125,15 @@ CPUs) with 0, 2 or 4 competing busy loops per CPU:
 | 2. Load sweep, 4 policies, load 0 → 4x | [`20261114-032917`](results/20261114-032917) | 56 (52 completed) |
 | 3. Video streaming, 8 policies | [`20261114-033839`](results/20261114-033839) | 72 (64 completed) |
 
+Three more (Nov 19–20) on an emulated 100 Mbit/s path (+10 ms, 0% or 0.1% random loss), server Intel
+i7-14700 (28 logical CPUs), same Wi-Fi client, 100 MB downloads:
+
+| Experiment | Result folder | Runs |
+|---|---|---|
+| 4. Fixed threshold 2–100 vs loss, no CPU load | [`20261119-230609`](results/20261119-230609) | 42 (all completed) |
+| 5. 8 policies on the lossy path, load 0/2x/4x | [`20261119-232105`](results/20261119-232105) | 144 (all completed) |
+| 6. `adaptive`'s ceiling 2–100 × 5 modifier sets, 2x load: 0.1% loss (two runs, pooled) and 0% loss | [`20261120-002614`](results/20261120-002614), [`20261120-010759`](results/20261120-010759), [`20261120-033617`](results/20261120-033617) | 432 (all completed) |
+
 Details, tables and discussion: [docs/report.md](docs/report.md).
 
 1. **`adaptive` follows the CPU load.** Idle server: `T = 2` (RFC behaviour). `T` rises with the
@@ -148,7 +157,17 @@ Details, tables and discussion: [docs/report.md](docs/report.md).
    server's remaining ACK cost is mostly per acknowledged packet.
 8. **LiteQUIC's rule misreads Wi-Fi:** it raised `T` on an *idle* server (mean 66) and changed it
    36–61 times per second.
-9. **Open issues:** 4.3% of runs stalled (no packet in either direction for 16 s), almost all
+9. **Loss needs network bounds** (experiments 4–5). On the emulated path `T = 2` gives one ACK per
+   4–5 packets, so under load `adaptive` (`T = 100`) cuts server ACK-processing time by 60–65% and
+   client ACK generation by >90% at unchanged goodput. With 0.1% loss, though, `T = 100` loses
+   70–76% of goodput (16 vs 55–57 Mbit/s), whether set by `fixed:100` or by `adaptive`;
+   `T <= 8` costs nothing. Sweeping `adaptive`'s ceiling (experiment 6): on the clean path every
+   variant keeps 93 Mbit/s at every ceiling (82–94% fewer ACKs at 100); with loss, without
+   modifiers (or with `+phase` only) goodput falls like a fixed threshold; `+net` (caps `T` at ~15), `+delay`
+   (ACK within SRTT/4) and `adaptive+all` keep 42–55 Mbit/s at any ceiling, `adaptive+all`
+   48–49 Mbit/s (94–96% of `fixed:2`) with 67–69% fewer ACKs. At ceiling 100 in experiment 5,
+   `adaptive+all` kept 79–84%.
+10. **Open issues:** 4.3% of Wi-Fi runs stalled (no packet in either direction for 16 s), almost all
    under load and with every kind of policy; the cause is unknown. `+reorder` saw no reordered
    packet in 472 downloads.
 
@@ -172,7 +191,7 @@ Details, tables and discussion: [docs/report.md](docs/report.md).
 | `analysis/parse_results.py` | Turns a run into `runs.csv` (downloads) or `videos.csv` (video sessions), `ack_decisions.csv`, `summary.csv` |
 | `analysis/plot.py` | Draws the figures of a run into `results/<run>/figures/` |
 | `analysis/summarize.py` | Prints the report's tables (markdown) for a run |
-| `analysis/loss.py` | Tables and the report figure for the lossy-path experiments (4 and 5) |
+| `analysis/loss.py` | Tables and the report figure for the lossy-path experiments (4–6) |
 | `results/` | One folder per evaluation run; index in [results/README.md](results/README.md) |
 | `docs/` | [Report](docs/report.md), [design notes](docs/design.md), [BibTeX](docs/refs.bib) |
 | `proposal/` | Course proposal |
@@ -218,14 +237,14 @@ ssh <user>@<server> 'cd ~/Documents/mcn26 && git merge --ff-only from-client && 
 ### 3. Run the evaluation (on the client)
 
 All experiments of the report, with figures and tables (about 2–3 hours over ~600 Mbit/s Wi-Fi
-for experiments 1–3, about 1.5 hours for 4–5):
+for experiments 1–3, about 2.5 hours for 4–6):
 
 ```bash
 SERVER=<user>@<server-ip> NETEM_SERVER=<user>@<netem-server-ip> experiments/run_all.sh
-EXPERIMENTS="4 5" experiments/run_all.sh     # only some of them
+EXPERIMENTS="4 5 6" experiments/run_all.sh   # only some of them
 ```
 
-It runs five experiments, each into its own `results/<timestamp>/`:
+It runs six experiments, each into its own `results/<timestamp>/`:
 
 | # | Experiment | Settings (see [`experiments/run_all.sh`](experiments/run_all.sh)) |
 |---|---|---|
@@ -234,8 +253,9 @@ It runs five experiments, each into its own `results/<timestamp>/`:
 | 3 | Video streaming | 8 policies × server load `0`, `2x`, `4x` × 3 repetitions; 40 s of video in 2 s segments, bitrates 25–400 Mbit/s |
 | 4 | Loss sensitivity of a fixed threshold | 100 MB, `fixed:2` to `fixed:100` (7 values) on an emulated 100 Mbit/s path with +10 ms and 0% or 0.1% random loss, no CPU load, 3 repetitions |
 | 5 | Policies on the lossy path | 100 MB, 8 policies on the same path × server load `0`, `2x`, `4x` × 3 repetitions |
+| 6 | Ceiling sweep | 100 MB, 0% and 0.1% loss, server load `2x`: `adaptive:C` for C = 2…100 with no modifier, `+phase`, `+delay`, `+net` and all of them, plus `fixed:2`; 6 repetitions |
 
-Experiments 4 and 5 emulate the path with `tc` (`tbf` + `netem`, [`scripts/netem.sh`](scripts/netem.sh))
+Experiments 4–6 emulate the path with `tc` (`tbf` + `netem`, [`scripts/netem.sh`](scripts/netem.sh))
 on the egress of `NETEM_SERVER`, which needs a passwordless sudo rule for `tc`
 (`<user> ALL=(root) NOPASSWD: /usr/sbin/tc`). Their tables and figure come from
 [`analysis/loss.py`](analysis/loss.py).

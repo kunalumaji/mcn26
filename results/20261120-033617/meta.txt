@@ -1,0 +1,10 @@
+date=2026-11-20T03:36:17+05:30
+server=kunal@10.21.232.3 cc=cubic reps=6 workload=files
+files=100MB.bin
+policies=fixed:2 adaptive:2 adaptive:4 adaptive:8 adaptive:16 adaptive:32 adaptive:64 adaptive:100 adaptive:2+phase adaptive:4+phase adaptive:8+phase adaptive:16+phase adaptive:32+phase adaptive:64+phase adaptive:100+phase adaptive:2+delay adaptive:4+delay adaptive:8+delay adaptive:16+delay adaptive:32+delay adaptive:64+delay adaptive:100+delay adaptive:2+net adaptive:4+net adaptive:8+net adaptive:16+net adaptive:32+net adaptive:64+net adaptive:100+net adaptive:2+net+phase+reorder+delay adaptive:4+net+phase+reorder+delay adaptive:8+net+phase+reorder+delay adaptive:16+net+phase+reorder+delay adaptive:32+net+phase+reorder+delay adaptive:64+net+phase+reorder+delay adaptive:100+net+phase+reorder+delay
+server_loads=2x load_scope=shared client_load=0
+netem_profiles=100mbit:10ms:0
+netem_link=enp4s0 100 Mbit/s
+client_commit=6f0237d client_dirty=0 server_commit=6f0237d server_dirty=0
+client_host=kunal-750XGK client_cores=12 client_kernel=7.0.0-42-generic
+server_host=netsys server_cores=28 server_kernel=7.0.0-38-generic

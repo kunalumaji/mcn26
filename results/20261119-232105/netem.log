@@ -1,0 +1,18 @@
+== 2026-11-19T23:21:16+05:30 load=0 net=100mbit:10ms:0
+qdisc tbf 1: root refcnt 2 rate 100Mbit burst 15140b lat 18.8ms 
+qdisc netem 10: parent 1:1 limit 251 delay 10ms
+== 2026-11-19T23:25:39+05:30 load=0 net=100mbit:10ms:0.1
+qdisc tbf 1: root refcnt 2 rate 100Mbit burst 15140b lat 18.8ms 
+qdisc netem 10: parent 1:1 limit 251 delay 10ms loss 0.1%
+== 2026-11-19T23:35:34+05:30 load=2x net=100mbit:10ms:0
+qdisc tbf 1: root refcnt 2 rate 100Mbit burst 15140b lat 18.8ms 
+qdisc netem 10: parent 1:1 limit 251 delay 10ms
+== 2026-11-19T23:39:54+05:30 load=2x net=100mbit:10ms:0.1
+qdisc tbf 1: root refcnt 2 rate 100Mbit burst 15140b lat 18.8ms 
+qdisc netem 10: parent 1:1 limit 251 delay 10ms loss 0.1%
+== 2026-11-19T23:52:33+05:30 load=4x net=100mbit:10ms:0
+qdisc tbf 1: root refcnt 2 rate 100Mbit burst 15140b lat 18.8ms 
+qdisc netem 10: parent 1:1 limit 251 delay 10ms
+== 2026-11-19T23:56:42+05:30 load=4x net=100mbit:10ms:0.1
+qdisc tbf 1: root refcnt 2 rate 100Mbit burst 15140b lat 18.8ms 
+qdisc netem 10: parent 1:1 limit 251 delay 10ms loss 0.1%

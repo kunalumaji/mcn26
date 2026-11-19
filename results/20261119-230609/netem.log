@@ -1,0 +1,6 @@
+== 2026-11-19T23:06:20+05:30 load=0 net=100mbit:10ms:0
+qdisc tbf 1: root refcnt 2 rate 100Mbit burst 15140b lat 18.8ms 
+qdisc netem 10: parent 1:1 limit 251 delay 10ms
+== 2026-11-19T23:10:09+05:30 load=0 net=100mbit:10ms:0.1
+qdisc tbf 1: root refcnt 2 rate 100Mbit burst 15140b lat 18.8ms 
+qdisc netem 10: parent 1:1 limit 251 delay 10ms loss 0.1%

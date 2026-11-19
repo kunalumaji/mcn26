@@ -17,6 +17,28 @@ so the busy loops compete with the QUIC threads. Created by `experiments/run_all
 | [`20261114-032917`](20261114-032917) | `4076256` | 2: load sweep, 500 MB, 4 policies × load 0–4x (7 steps) × 2 | 56 (4 stalled) | `figures/load_sweep.png` |
 | [`20261114-033839`](20261114-033839) | `4076256` | 3: video streaming, 8 policies × load 0/2x/4x × 3 | 72 (8 stalled) | Per-segment records in `segments.log`; QoE in `videos.csv` |
 
+## Lossy-path runs (Nov 19–20)
+
+Server `kunal@10.21.232.3` (Intel Core i7-14700, 28 logical CPUs, 100 Mbit/s Ethernet), client on
+campus Wi-Fi. `tbf` + `netem` on the server's egress (`scripts/netem.sh`): 100 Mbit/s, +10 ms
+(minimum RTT 11.5 ms), 0% or 0.1% random loss. 100 MB downloads, server CPU load in the servers'
+session. Experiments 4 and 5 and the two lossy halves of experiment 6 were created by
+`experiments/run_all.sh` (experiment 6 then ran 3 repetitions on the lossy path only, so it ran
+twice); the clean half of experiment 6 by `experiments/run_quicfile.sh` with the settings of
+`run_all.sh` (6 repetitions, `NETEM_PROFILES=100mbit:10ms:0`). Tables in `tables.md` from
+`analysis/loss.py`. Figure 4 of report v1.6 (`20261120-033617/figures/threshold_loss.pdf`):
+`analysis/loss.py --fig fig.pdf results/20261119-230609 results/20261120-002614 results/20261120-010759 results/20261120-033617`.
+Report v1.5's Figure 4 used the first three of these (`20261120-010759/figures/loss.pdf`, drawn
+by `analysis/loss.py` at commit `6f0237d`).
+
+| Run | Commit | Experiment | Runs | Notes |
+|---|---|---|---|---|
+| [`20261119-230609`](20261119-230609) | `ad088e5` | 4: `fixed:2` … `fixed:100` (7 values) × 0%/0.1% loss × 3, no load | 42 (0 stalled) | |
+| [`20261119-232105`](20261119-232105) | `ad088e5` | 5: 8 policies × 0%/0.1% loss × load 0/2x/4x × 3 | 144 (0 stalled) | Emulated qdiscs per level in `netem.log` |
+| [`20261120-002614`](20261120-002614) | `2000450` | 6: `fixed:2` + `adaptive:C` (C = 2…100) × {none, `+phase`, `+delay`, `+net`, all} × 3, 0.1% loss, load 2x | 108 (0 stalled) | |
+| [`20261120-010759`](20261120-010759) | `068509e` | 6 again (same settings) | 108 (0 stalled) | Pooled with the run above in the report |
+| [`20261120-033617`](20261120-033617) | `6f0237d` | 6 on the clean path (0% loss), same policies, × 6 | 216 (0 stalled) | |
+
 "Stalled": msquic's disconnect timeout (`0x6e`, no acknowledgement for 16 s); the client's output
 is in `failures.log`, server restarts in `restarts.log`.
 
