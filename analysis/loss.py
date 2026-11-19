@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""Tables and the report figure for the lossy-path experiments (run_all.sh 4 and 5).
+"""Tables and the report figure for the lossy-path experiments (run_all.sh 4-6).
 
-    analysis/loss.py results/<run> [results/<run> ...]              # Markdown tables
-    analysis/loss.py --fig out.pdf results/<exp4> results/<exp5>    # also the figure
+    analysis/loss.py results/<run> [results/<run> ...]                     # Markdown tables
+    analysis/loss.py --fig out.pdf results/<exp4> results/<exp6> [...]     # also the figure
+
+With --fig, several ceiling-sweep runs (repeats of experiment 6) are pooled into one.
 
 Reads runs.csv (analysis/parse_results.py) of runs made with NETEM_PROFILES. Values are
 medians over completed downloads, with interquartile ranges; ACK reduction and ACK-path
-times are relative to fixed:2 on the same path and server load. A run in which every
-policy is fixed:N is a threshold sweep (experiment 4); otherwise a policy comparison
-(experiment 5).
+times are relative to fixed:2 on the same path and server load. Kinds of run:
+  threshold sweep  every policy is fixed:N (experiment 4)
+  ceiling sweep    fixed:2 plus adaptive:N with modifiers, e.g. adaptive:16+net (experiment 6)
+  policy comparison  anything else (experiment 5)
 
-Figure: (a) goodput vs fixed threshold on the clean and the lossy path (experiment 4);
-(b) goodput and (c) ACK reduction of each policy on the lossy path by server load
-(experiment 5).
+Figure: (a) goodput vs fixed threshold on the clean and the lossy path, idle server
+(experiment 4); (b) goodput and (c) ACK reduction vs adaptive's ceiling, one line per
+modifier, on the lossy path under CPU load (experiment 6).
 """
 import argparse
 import csv
@@ -22,17 +25,16 @@ from pathlib import Path
 MB = 1024 * 1024
 LOAD_NAMES = {"0": "none"}
 
-# Colours of the report's other figures (same colour = same policy); hatched = +phase.
-STYLE = {
-    "fixed:2": ("#2878b5", False, "fixed:2 (baseline)"),
-    "fixed:100": ("#009e73", False, "fixed:100"),
-    "fixed:100+phase": ("#009e73", True, "fixed:100+phase"),
-    "litequic": ("#984ea3", False, "litequic"),
-    "adaptive": ("#e69f00", False, "adaptive"),
-    "adaptive+net": ("#cc79a7", False, "adaptive+net"),
-    "adaptive+phase+reorder+delay": ("#d55e00", True, "adaptive+phase+reorder+delay"),
-    "adaptive+net+phase+reorder+delay": ("#d55e00", False, "adaptive+all"),
+# Lines of panels (b)-(c): colour, marker, label. Colours as in the report's other figures
+# where the policy appears there (adaptive orange, adaptive+all vermillion, fixed:2 blue).
+LINES = {
+    "adaptive": ("#e69f00", "o", "adaptive"),
+    "adaptive+phase": ("#56b4e9", "^", "adaptive+phase"),
+    "adaptive+delay": ("#009e73", "v", "adaptive+delay"),
+    "adaptive+net": ("#cc79a7", "s", "adaptive+net"),
+    "adaptive+net+phase+reorder+delay": ("#d55e00", "D", "adaptive+all"),
 }
+BASELINE_COLOR = "#2878b5"
 
 
 def num(value):
@@ -71,22 +73,40 @@ def acks_per_mb(r):
     return frames / (bytes_ / MB) if frames and bytes_ else None
 
 
-def threshold_of(spec):
-    return int(spec.split(":")[1])
+def split_spec(spec):
+    """'adaptive:16+net' -> ('adaptive+net', 16); 'fixed:8' -> ('fixed', 8); 'litequic' -> (.., None)."""
+    base, _, modifiers = spec.partition("+")
+    name, _, n = base.partition(":")
+    family = name + ("+" + modifiers if modifiers else "")
+    return family, int(n) if n else None
 
 
 class Run:
-    def __init__(self, out):
-        self.out = Path(out)
-        rows = list(csv.DictReader(open(self.out / "runs.csv")))
+    def __init__(self, *outs):
+        self.outs = [Path(o) for o in outs]
+        self.name = " + ".join(o.name for o in self.outs)
+        rows = [r for o in self.outs for r in csv.DictReader(open(o / "runs.csv"))]
         self.rows = [r for r in rows if r["ok"] == "1"]
         self.failed = [r for r in rows if r["ok"] != "1"]
         self.specs = list(dict.fromkeys(r["spec"] for r in rows))
         self.loads = list(dict.fromkeys(r["server_load"] for r in rows))
         self.paths = sorted(dict.fromkeys(r["netem"] for r in rows), key=loss_of)
-        self.sweep = all(s.startswith("fixed:") and "+" not in s for s in self.specs)
-        if self.sweep:
-            self.specs.sort(key=threshold_of)
+        parsed = {s: split_spec(s) for s in self.specs}
+        if all(f == "fixed" and n for f, n in parsed.values()):
+            self.kind = "threshold sweep"
+        elif all(s == "fixed:2" or (f.startswith("adaptive") and n) for s, (f, n) in parsed.items()):
+            self.kind = "ceiling sweep"
+        else:
+            self.kind = "policy comparison"
+        if self.kind != "policy comparison":
+            families = list(dict.fromkeys(f for f, _ in parsed.values()))
+            self.specs.sort(key=lambda s: (families.index(parsed[s][0]), parsed[s][1]))
+        # family -> [(N, spec)] for the sweeps
+        self.lines = {}
+        for s in self.specs:
+            family, n = parsed[s]
+            if s != "fixed:2" or self.kind == "threshold sweep":
+                self.lines.setdefault(family, []).append((n, s))
 
     def select(self, spec, load, netem, failed=False):
         return [r for r in (self.failed if failed else self.rows)
@@ -107,8 +127,7 @@ class Run:
 
 
 def print_tables(run):
-    kind = "threshold sweep" if run.sweep else "policy comparison"
-    print(f"Run `{run.out.name}` ({kind}): {len(run.rows)} completed downloads, "
+    print(f"Run `{run.name}` ({run.kind}): {len(run.rows)} completed downloads, "
           f"{len(run.failed)} stalled.\n")
     print("Medians [IQR]; ACK reduction and ACK-path times relative to `fixed:2` on the same "
           "path and load.\n")
@@ -143,98 +162,103 @@ def print_tables(run):
     print()
 
 
-def figure(sweep, policies, path):
+def errorbar_line(ax, xs, stats, offset=1.0, **style):
+    """Median line with IQR whiskers; xs on a log axis, shifted by a factor to keep
+    overlapping whiskers apart."""
+    pts = [(x * offset, m, q1, q3) for x, (m, q1, q3) in zip(xs, stats) if m is not None]
+    ax.errorbar([p[0] for p in pts], [p[1] for p in pts],
+                yerr=[[p[1] - p[2] if p[2] is not None else 0 for p in pts],
+                      [p[3] - p[1] if p[3] is not None else 0 for p in pts]],
+                markersize=5.5, lw=1.6, capsize=2.2, elinewidth=0.9,
+                markeredgecolor="white", markeredgewidth=0.7, zorder=3, **style)
+
+
+def threshold_axis(ax, ts, label):
+    ax.set_xscale("log", base=2)
+    ax.set_xticks(ts)
+    ax.set_xticklabels([str(t) for t in ts])
+    ax.minorticks_off()
+    ax.set_xlim(ts[0] / 1.25, ts[-1] * 1.25)
+    ax.set_xlabel(label)
+
+
+def figure(sweep, ceiling, path):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.patches import Patch
+    from matplotlib.lines import Line2D
 
     plt.rcParams.update({
         "font.family": "serif", "font.serif": ["Nimbus Roman", "Times New Roman", "Times"],
         "mathtext.fontset": "stix", "font.size": 10, "axes.labelsize": 10,
         "xtick.labelsize": 9, "ytick.labelsize": 9, "legend.fontsize": 9,
         "axes.linewidth": 0.8, "xtick.direction": "in", "ytick.direction": "in",
-        "hatch.linewidth": 1.4, "pdf.fonttype": 42,
+        "pdf.fonttype": 42,
     })
-    fig, axes = plt.subplots(1, 3, figsize=(8.6, 3.0),
-                             gridspec_kw={"width_ratios": [1.25, 1.3, 1.3], "wspace": 0.3})
+    fig, axes = plt.subplots(1, 3, figsize=(8.6, 3.0), gridspec_kw={"wspace": 0.34})
 
-    # (a) Fixed-threshold sweep on the clean and the lossy path (no CPU load).
+    # (a) Fixed-threshold sweep on the clean and the lossy path (idle server).
     ax = axes[0]
     load = sweep.loads[0]
-    ts = [threshold_of(s) for s in sweep.specs]
-    styles = [("#222222", "o"), ("#6f8fa6", "s")]
-    for (color, marker), netem in zip(styles, sweep.paths):
-        stats = [med_iqr(sweep.metric(s, load, netem, "goodput_mbps")) for s in sweep.specs]
-        y = [m for m, _, _ in stats]
-        lo = [m - q1 if q1 is not None else 0 for m, q1, _ in stats]
-        hi = [q3 - m if q3 is not None else 0 for m, _, q3 in stats]
-        ax.errorbar(ts, y, yerr=[lo, hi], color=color, marker=marker, markersize=6, lw=1.8,
-                    capsize=2.5, elinewidth=1, markeredgecolor="white", markeredgewidth=0.8,
-                    label=f"{loss_of(netem):g}% loss", zorder=3)
-    ax.set_xscale("log", base=2)
-    ax.set_xticks(ts)
-    ax.set_xticklabels([str(t) for t in ts])
-    ax.minorticks_off()
-    ax.set_xlabel("ACK threshold $T$ (packets)")
+    (_, points), = sweep.lines.items()
+    ts = [n for n, _ in points]
+    for (color, marker), netem in zip([("#222222", "o"), ("#6f8fa6", "s")], sweep.paths):
+        errorbar_line(ax, ts, [med_iqr(sweep.metric(s, load, netem, "goodput_mbps"))
+                               for _, s in points],
+                      color=color, marker=marker, label=f"{loss_of(netem):g}% loss")
+    threshold_axis(ax, ts, "ACK threshold $T$ (packets)")
     ax.set_ylabel("Goodput (Mb/s)")
     ax.set_ylim(0, 105)
-    ax.legend(loc="lower left", frameon=False, title="Fixed $T$, no load",
-              title_fontsize=9)
+    ax.legend(loc="lower left", frameon=False, title="fixed:$T$, idle server", title_fontsize=9)
 
-    # (b), (c) Policies on the lossy path by server load.
-    lossy = policies.paths[-1]
-    specs = [s for s in policies.specs if s in STYLE]
-    loads = policies.loads
-    width = 0.8 / len(specs)
+    # (b), (c) Ceiling sweep of adaptive with each modifier (lossy path, CPU load).
+    load = ceiling.loads[0]
+    netem = ceiling.paths[-1]
+    families = [f for f in LINES if f in ceiling.lines]
+    offsets = [1 + 0.035 * (i - (len(families) - 1) / 2) for i in range(len(families))]
+    base = med_iqr(ceiling.metric("fixed:2", load, netem, "goodput_mbps"))
     for ax, key in [(axes[1], "goodput"), (axes[2], "reduction")]:
-        for i, spec in enumerate(specs):
-            color, hatched, _ = STYLE[spec]
-            xs, ys, lo, hi = [], [], [], []
-            for j, load in enumerate(loads):
-                if key == "goodput":
-                    m, q1, q3 = med_iqr(policies.metric(spec, load, lossy, "goodput_mbps"))
-                else:
-                    m, q1, q3 = policies.reduction(spec, load, lossy)
-                if m is None:
-                    continue
-                xs.append(j - 0.4 + width * (i + 0.5))
-                ys.append(m)
-                lo.append(m - q1 if q1 is not None else 0)
-                hi.append(q3 - m if q3 is not None else 0)
-            ax.bar(xs, ys, width, color="white" if hatched else color,
-                   edgecolor=color if hatched else "black", hatch="///" if hatched else None,
-                   linewidth=0.8 if hatched else 0.6, zorder=2)
-            ax.errorbar(xs, ys, yerr=[lo, hi], fmt="none", ecolor="black", elinewidth=0.9,
-                        capsize=1.8, zorder=3)
-        ax.set_xticks(range(len(loads)))
-        ax.set_xticklabels([LOAD_NAMES.get(l, l) for l in loads])
-        ax.set_xlim(-0.5, len(loads) - 0.5)
-        ax.set_xlabel("Server CPU load")
+        for family, offset in zip(families, offsets):
+            color, marker, label = LINES[family]
+            points = ceiling.lines[family]
+            if key == "goodput":
+                stats = [med_iqr(ceiling.metric(s, load, netem, "goodput_mbps")) for _, s in points]
+            else:
+                stats = [ceiling.reduction(s, load, netem) for _, s in points]
+            errorbar_line(ax, [n for n, _ in points], stats, offset=offset,
+                          color=color, marker=marker, label=label)
+        cs = sorted({n for pts in ceiling.lines.values() for n, _ in pts})
+        threshold_axis(ax, cs, "Ceiling $C$ of adaptive (packets)")
         if key == "goodput":
-            ax.set_ylabel(f"Goodput, {loss_of(lossy):g}% loss (Mb/s)")
-            ax.set_ylim(bottom=0)
+            ax.axhline(base[0], color=BASELINE_COLOR, lw=1.3, ls="--", zorder=2)
+            ax.set_ylabel("Goodput (Mb/s)")
+            ax.set_ylim(0, 105)
         else:
-            ax.set_ylabel(f"ACK reduction vs fixed:2 (%)")
-            ax.axhline(0, color="black", lw=0.8, zorder=1)
+            ax.axhline(0, color=BASELINE_COLOR, lw=1.3, ls="--", zorder=2)
+            ax.set_ylabel("ACK reduction vs fixed:2 (%)")
+            ax.set_ylim(-10, 100)
+        # Condition label in the empty corner: top right for goodput (falls with C),
+        # top left for the ACK reduction (rises with C).
+        ax.text(0.97 if key == "goodput" else 0.04, 0.96,
+                f"{loss_of(netem):g}% loss, {LOAD_NAMES.get(load, load)} CPU load",
+                transform=ax.transAxes, ha="right" if key == "goodput" else "left", va="top",
+                fontsize=9)
 
     for ax, label in zip(axes, "abc"):
         ax.grid(axis="y", linestyle=":", color="#b0b0b0", lw=0.7, zorder=0)
         ax.set_axisbelow(True)
         ax.tick_params(top=True, right=True)
-        ax.text(0.5, -0.24, f"({label})", transform=ax.transAxes, ha="center", va="top",
+        ax.text(0.5, -0.27, f"({label})", transform=ax.transAxes, ha="center", va="top",
                 fontsize=10)
 
-    handles = [Patch(facecolor="white" if STYLE[s][1] else STYLE[s][0],
-                     edgecolor=STYLE[s][0] if STYLE[s][1] else "black",
-                     hatch="///" if STYLE[s][1] else None, label=STYLE[s][2]) for s in specs]
-    # Legend read row by row in bar order (matplotlib fills columns first).
-    ncol = min(4, len(handles))
-    rows = -(-len(handles) // ncol)
-    grid = [handles[r * ncol:(r + 1) * ncol] for r in range(rows)]
-    ordered = [grid[r][c] for c in range(ncol) for r in range(rows) if c < len(grid[r])]
-    fig.legend(handles=ordered, loc="upper center", ncol=ncol, frameon=False,
-               bbox_to_anchor=(0.5, 1.15), columnspacing=1.0, handlelength=2.0)
+    handles = [Line2D([], [], color=LINES[f][0], marker=LINES[f][1], lw=1.6, markersize=5.5,
+                      markeredgecolor="white", markeredgewidth=0.7, label=LINES[f][2])
+               for f in families]
+    handles.append(Line2D([], [], color=BASELINE_COLOR, lw=1.3, ls="--",
+                          label="fixed:2 (baseline)"))
+    fig.legend(handles=handles, loc="upper center", ncol=len(handles), frameon=False,
+               bbox_to_anchor=(0.5, 1.06), columnspacing=1.0, handlelength=2.0,
+               handletextpad=0.5)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, bbox_inches="tight", pad_inches=0.02)
     print(f"wrote {path}")
@@ -243,18 +267,19 @@ def figure(sweep, policies, path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("runs", nargs="+")
-    parser.add_argument("--fig", help="write the report figure (needs one sweep and one "
-                        "policy run)")
+    parser.add_argument("--fig", help="write the report figure (needs a threshold sweep and a "
+                        "ceiling sweep)")
     args = parser.parse_args()
     runs = [Run(r) for r in args.runs]
     for run in runs:
         print_tables(run)
     if args.fig:
-        sweeps = [r for r in runs if r.sweep]
-        others = [r for r in runs if not r.sweep]
-        if not sweeps or not others:
-            parser.error("--fig needs a threshold-sweep run and a policy run")
-        figure(sweeps[0], others[0], args.fig)
+        sweeps = [r for r in runs if r.kind == "threshold sweep"]
+        ceilings = [r for r in runs if r.kind == "ceiling sweep"]
+        if not sweeps or not ceilings:
+            parser.error("--fig needs a threshold-sweep run and a ceiling-sweep run")
+        pooled = Run(*[o for r in ceilings for o in r.outs]) if len(ceilings) > 1 else ceilings[0]
+        figure(sweeps[0], pooled, args.fig)
 
 
 if __name__ == "__main__":
